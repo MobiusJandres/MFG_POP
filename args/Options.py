@@ -1,18 +1,8 @@
 """
-Copyright (c) 2026 Mobius Logic and Matrix Research, Inc
-All rights reserved.
-
 This source code is licensed under the license found in the
 LICENSE file in the root directory of this source tree.
 
 Options.py: Provides a universal command-line argument parser for all project scripts.
-
-Authors: 
-    * Johnathan Andres, Mobius Logic
-    * Christina Cole, Matrix Research
-    * Joel Klipfel, Matrix Research
-Companies: [Mobius Logic](https://www.mobiuslogic.com), [Matrix Research, Inc](matrixresearch.com)
-Contact: [Joel Klipfel](mailto:joel.klipfel@matrixresearch.com)
 """
 import argparse
 import logging

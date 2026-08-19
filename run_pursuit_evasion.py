@@ -9,21 +9,38 @@ from mfgames.plotting import MFGPlotter
 
 def main():
     options = Options()
-    args = options.parseArgs()
+    options.parser.set_defaults(config='configs/pursuit_evasion.yml')
+    options.parser.add_argument('--targets', default=None, nargs='*', help='Custom target coordinates [[x1, y1], [x2, y2], ...]')
 
+    args = options.parseArgs()
     print(f"Results will be saved to: {args.save_dir}", flush=True)
 
     # Initialize environment
-    map_str = str(args.map_file) if args.map_file else None
-    scen_str = str(args.scen_file) if args.scen_file else None
+    map_str = str(args.map_file) if getattr(args, 'map_file', None) else None
+    scen_str = str(args.scen_file) if getattr(args, 'scen_file', None) else None
 
+    # Parse target coordinates (handles nested YAML lists or flat CLI nargs)
+    raw_targets = getattr(args, 'targets', None)
+    custom_targets = None
+
+    if raw_targets:
+        if isinstance(raw_targets[0], (int, float, str)) and not isinstance(raw_targets[0], (list, tuple)):
+            # Handle flat CLI arguments: --targets 100 700 700 700 384 100
+            coords = [float(x) for x in raw_targets]
+            custom_targets = [coords[i:i + 2] for i in range(0, len(coords), 2)]
+        else:
+            # Handle nested YAML list
+            custom_targets = [[float(c) for c in t] for t in raw_targets]
+
+    # Instantiate MovingAI map with target overrides
     pde_mesh = MAP2PDE(
         map_filepath=map_str,
         scen_filepath=scen_str,
         Lx=args.room_width,
         Ly=args.room_height,
         Nx=args.Nx,
-        Ny=args.Ny
+        Ny=args.Ny,
+        custom_targets=custom_targets  # Passes parsed targets to MAP2PDE
     )
     pde_mesh.parse_files(num_agents=args.num_agents)
     pde_mesh.build_spatial_mesh()

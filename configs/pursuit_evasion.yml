@@ -13,6 +13,9 @@ Nx: 100
 Ny: 100
 num_agents: 50
 
+# Target behavior toggle
+targets_are_exits: false  # Set to true if you want mass to exit at targets
+
 # Custom Multiple Initial Target Placements [x, y] in physical meters
 # (Set to null/None if you prefer to use the goal positions from scen_file instead)
 targets:

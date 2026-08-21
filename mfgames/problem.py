@@ -1,5 +1,5 @@
 """
-Unified Object-Oriented wrapper supporting both Hard Doors and Pursuit-Evasion Targets.
+Unified Object-Oriented solvers for 1-Population, Pursuit-Evasion, and 2-Population systems.
 """
 import time
 import numpy as np
@@ -8,6 +8,9 @@ import scipy.sparse.linalg
 from mfgames.evasion import EvaderSwarm
 from mfgames.solvers import solveFP_2D, solveHJB_withM
 from mfgames.numerics import (
+    compute_FP_matrix_entries,
+    getFnU_2D,
+    compute_HJB_matrix_entries,
     compute_FP_matrix_entries_2Pop,
     getFnU_2D_2Pop,
     compute_HJB_matrix_entries_2Pop,
@@ -17,7 +20,17 @@ from mfgames.numerics import (
 class MFGSolver:
     """Single-population and Pursuit-Evasion Mean Field Game solver."""
 
-    def __init__(self, pde_mesh_data, T: float = 3.0, Nt: int = 100, thetaUM: float = 0.1, door_mask_3d=None, is_pursuit_evasion=False, v_max_evader=15.0):
+    def __init__(
+        self,
+        pde_mesh_data,
+        T: float = 3.0,
+        Nt: int = 100,
+        thetaUM: float = 0.1,
+        door_mask_3d=None,
+        is_pursuit_evasion=False,
+        v_max_evader=15.0,
+        targets_are_exits: bool = False
+    ):
         self.pde_mesh = pde_mesh_data
         self.Nx, self.Ny = pde_mesh_data.X.shape
         self.Lx, self.Ly = pde_mesh_data.Lx, pde_mesh_data.Ly
@@ -25,6 +38,7 @@ class MFGSolver:
         self.Dt, self.Nt = T / Nt, Nt
         self.thetaUM = thetaUM
         self.is_pursuit_evasion = is_pursuit_evasion
+        self.targets_are_exits = targets_are_exits
 
         self.omask = pde_mesh_data.get_pde_obstacle_mask()
         self.m0 = pde_mesh_data.build_initial_density()
@@ -36,20 +50,85 @@ class MFGSolver:
         if is_pursuit_evasion:
             goals = pde_mesh_data.get_goal_positions()
             self.evader_swarm = EvaderSwarm(goals, Nt, self.Dt, v_max=v_max_evader)
-            self.door_mask_3d = np.zeros((Nt + 1, self.Nx, self.Ny))
+            self.door_mask_3d = self._build_dynamic_evader_doors(self.evader_swarm.Y_trajectories)
         else:
             self.evader_swarm = None
-            self.door_mask_3d = door_mask_3d if door_mask_3d is not None else np.zeros((Nt + 1, self.Nx, self.Ny))
+            if door_mask_3d is not None:
+                self.door_mask_3d = door_mask_3d if targets_are_exits else np.zeros((Nt + 1, self.Nx, self.Ny))
+            else:
+                self.door_mask_3d = np.zeros((Nt + 1, self.Nx, self.Ny))
 
-    def compute_running_cost_history(self, evader_trajectories):
-        rc = np.zeros((self.Nt + 1, self.Nx, self.Ny))
+    def _build_dynamic_evader_doors(self, evader_trajectories):
+        """Constructs 3D door mask around moving evaders if targets_are_exits is enabled."""
+        door_mask = np.zeros((self.Nt + 1, self.Nx, self.Ny))
+        if not self.targets_are_exits or evader_trajectories is None:
+            return door_mask
+
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
         for k in range(self.Nt + 1):
-            min_dist_sq = np.full((self.Nx, self.Ny), 1e6)
             for ex, ey in evader_trajectories[k]:
-                min_dist_sq = np.minimum(min_dist_sq, (X - ex)**2 + (Y - ey)**2)
-            rc[k] = 0.01 * min_dist_sq
-        return rc
+                region = (np.abs(X - ex) <= self.Dx) & (np.abs(Y - ey) <= self.Dy)
+                door_mask[k][region] = 1.0
+        return door_mask
+
+    def compute_running_cost(self, evader_positions_k):
+        X, Y = self.pde_mesh.X, self.pde_mesh.Y
+        min_dist_sq = np.full((self.Nx, self.Ny), 1e6)
+        for ex, ey in evader_positions_k:
+            dist_sq = (X - ex)**2 + (Y - ey)**2
+            min_dist_sq = np.minimum(min_dist_sq, dist_sq)
+        return 0.01 * min_dist_sq
+
+    def solve_forward_FP_step(self, U_trajectory, door_mask_3d):
+        m = np.zeros_like(self.M)
+        m[0] = self.m0
+        N_total = self.Nx * self.Ny
+
+        for k in range(1, self.Nt + 1):
+            rows, cols, vals, b = compute_FP_matrix_entries(
+                m[k - 1], U_trajectory[k - 1], self.omask, door_mask_3d[k - 1],
+                self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
+            )
+            A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()
+            mtmp = sparse.linalg.spsolve(A, b)
+            m[k] = mtmp.reshape((self.Nx, self.Ny))
+        return m
+
+    def solve_backward_HJB_PE(self, M_trajectory, evader_trajectories, door_mask_3d):
+        u = np.zeros_like(self.U)
+        running_cost_Nt = self.compute_running_cost(evader_trajectories[self.Nt])
+        u[self.Nt] = -running_cost_Nt
+
+        for k in range(self.Nt - 1, -1, -1):
+            running_cost_k = self.compute_running_cost(evader_trajectories[k])
+            Unew_n = np.copy(u[k + 1])
+            N_total = self.Nx * self.Ny
+
+            for _ in range(30):
+                FnU_flat = getFnU_2D(
+                    u[k + 1], Unew_n, M_trajectory[k + 1], self.omask, door_mask_3d[k],
+                    running_cost_k, self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
+                ).flatten()
+
+                rows, cols, vals = compute_HJB_matrix_entries(
+                    Unew_n, M_trajectory[k + 1], self.omask, door_mask_3d[k],
+                    self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
+                )
+                A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()
+                b = A.dot(Unew_n.flatten()) - FnU_flat
+
+                for i in range(self.Nx):
+                    for j in range(self.Ny):
+                        if self.omask[i, j] == 0:
+                            b[i * self.Ny + j] = -500.0
+
+                Unres = sparse.linalg.spsolve(A, b).reshape((self.Nx, self.Ny))
+                l2err = np.linalg.norm(Unew_n.flatten() - Unres.flatten()) * np.sqrt(self.Dx * self.Dy)
+                Unew_n = np.copy(Unres)
+                if l2err < 1e-6:
+                    break
+            u[k] = Unew_n
+        return u
 
     def run_picard_system(self, max_iters: int = 10, tolerance: float = 1e-5):
         space_time_factor = np.sqrt(self.Dx * self.Dy * self.Dt)
@@ -58,26 +137,32 @@ class MFGSolver:
             start_time = time.time()
             print(f"\n>>> Macro Picard Loop Execution: {iiter} / {max_iters}", flush=True)
 
-            rc_hist = self.compute_running_cost_history(self.evader_swarm.Y_trajectories) if self.is_pursuit_evasion else None
-
-            U_temp = solveHJB_withM(
-                self.U, self.M, self.door_mask_3d, self.omask, rc_hist,
-                self.Nx, self.Ny, self.Nt, self.Dx, self.Dy, self.Dt
-            )
-            U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
-
-            M_temp = solveFP_2D(
-                self.m0, U_new, self.door_mask_3d, self.omask,
-                self.Nx, self.Ny, self.Nt, self.Dx, self.Dy, self.Dt
-            )
-            M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
-
             if self.is_pursuit_evasion:
+                current_door_mask = self._build_dynamic_evader_doors(self.evader_swarm.Y_trajectories)
+
+                U_temp = self.solve_backward_HJB_PE(self.M, self.evader_swarm.Y_trajectories, current_door_mask)
+                U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
+
+                M_temp = self.solve_forward_FP_step(U_new, current_door_mask)
+                M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
+
                 Y_temp = self.evader_swarm.update_evader_positions(M_new, self.omask, self.Dx, self.Dy, self.Lx, self.Ly)
                 Y_new = self.thetaUM * Y_temp + (1.0 - self.thetaUM) * self.evader_swarm.Y_trajectories
+
                 y_err = np.linalg.norm(Y_new - self.evader_swarm.Y_trajectories)
                 self.evader_swarm.Y_trajectories = np.copy(Y_new)
             else:
+                U_temp = solveHJB_withM(
+                    self.U, self.M, self.door_mask_3d, self.omask, None,
+                    self.Nx, self.Ny, self.Nt, self.Dx, self.Dy, self.Dt
+                )
+                U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
+
+                M_temp = solveFP_2D(
+                    self.m0, U_new, self.door_mask_3d, self.omask,
+                    self.Nx, self.Ny, self.Nt, self.Dx, self.Dy, self.Dt
+                )
+                M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
                 y_err = 0.0
 
             u_err = np.linalg.norm(U_new - self.U) * space_time_factor

@@ -11,7 +11,12 @@ def main():
     options = Options()
     options.parser.set_defaults(config='configs/pursuit_evasion.yml')
     options.parser.add_argument('--targets', default=None, nargs='*', help='Custom target coordinates [[x1, y1], [x2, y2], ...]')
-
+    options.parser.add_argument(
+        '--targets_are_exits', 
+        action='store_true', 
+        default=False, 
+        help='If True, targets act as exits and absorb pursuer density upon capture.'
+    )
     args = options.parseArgs()
     print(f"Results will be saved to: {args.save_dir}", flush=True)
 
@@ -52,7 +57,8 @@ def main():
         Nt=args.Nt,
         thetaUM=args.relaxation_theta,
         is_pursuit_evasion=True,
-        v_max_evader=args.v_max_evader
+        v_max_evader=args.v_max_evader,
+        targets_are_exits=args.targets_are_exits
     )
 
     # Execute 3-way Picard solver

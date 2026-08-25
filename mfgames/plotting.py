@@ -22,7 +22,6 @@ def plot_snapshot(
     Nt = m.shape[0]
     if not (0 <= k < Nt):
         raise IndexError(f"k={k} out of range for Nt={Nt}")
-
     current_time = k * Dt
     extent = [0, Lx, 0, Ly]
     Nx, Ny = m.shape[1], m.shape[2]
@@ -50,12 +49,10 @@ def plot_snapshot(
     for ax in axes:
         ax.set_xlabel("X (m)", fontsize=11)
         ax.set_ylabel("Y (m)", fontsize=11)
-
         if omask is not None:
             obstacle_rgba = np.zeros((*omask.shape, 4))
             obstacle_rgba[..., 3] = np.where(omask == 0, 0.75, 0.0)
             ax.imshow(obstacle_rgba.transpose(1, 0, 2), origin="lower", extent=extent)
-
         if door_mask_k is not None:
             ax.contour(xs, ys, door_mask_k.T, levels=[0.5], colors="lime", linewidths=2)
 
@@ -88,12 +85,10 @@ def plot_progression(
         )
         ax.set_title(f"$t = {k * Dt:.1f}$s", fontsize=10)
         ax.set_xlabel("X (m)", fontsize=8)
-
         if omask is not None:
             obstacle_rgba = np.zeros((*omask.shape, 4))
             obstacle_rgba[..., 3] = np.where(omask == 0, 0.75, 0.0)
             ax.imshow(obstacle_rgba.transpose(1, 0, 2), origin="lower", extent=extent)
-
         if door_mask is not None:
             door_mask_k = door_mask[k] if door_mask.ndim == 3 else door_mask
             ax.contour(xs, ys, door_mask_k.T, levels=[0.5], colors="lime", linewidths=2)
@@ -124,9 +119,9 @@ class MFGPlotter:
         self.M2 = getattr(solver_instance, 'M2', None)
         self.U1 = getattr(solver_instance, 'U1', getattr(solver_instance, 'U', None))
         self.U2 = getattr(solver_instance, 'U2', None)
+
         self.evader_trajectories = getattr(getattr(solver_instance, 'evader_swarm', None), 'Y_trajectories', None)
         self.door_mask_3d = getattr(solver_instance, 'door_mask_3d', None)
-
         self.wall_mask = (solver_instance.omask == 0)
         self.extent = [0, self.Lx, 0, self.Ly]
 
@@ -169,7 +164,6 @@ class MFGPlotter:
             if self.goals_2:
                 gxs, gys = zip(*self.goals_2)
                 ax.scatter(gxs, gys, color='#2288ff', marker='X', s=70, edgecolor='white', linewidth=1.2, label='Pop 2 Goals', zorder=10)
-
             if self.door_mask_3d is not None and np.sum(self.door_mask_3d[t_idx]) > 0:
                 xs = np.linspace(0, self.Lx, self.M1.shape[1])
                 ys = np.linspace(0, self.Ly, self.M1.shape[2])
@@ -188,7 +182,6 @@ class MFGPlotter:
 
         rgb[:, :, 1] -= alpha1 * 0.95
         rgb[:, :, 2] -= alpha1 * 0.95
-
         rgb[:, :, 0] -= alpha2 * 0.95
         rgb[:, :, 1] -= alpha2 * 0.95
 
@@ -201,11 +194,16 @@ class MFGPlotter:
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         t0, t_mid, t_end = 0, self.Nt // 2, self.Nt
 
+        # Calculate stable vmax from initial t=0 frame to avoid washed out colors
+        m0_frame = self._get_spatial_frame(self.M1, t0)
+        m0_masked = np.ma.masked_where(self.wall_mask, m0_frame)
+        stable_vmax = np.max(m0_masked) if np.max(m0_masked) > 0 else 1.0
+
         if self.M2 is not None:
-            # --- 2-POPULATION 1x3 TIMELINE DASHBOARD ---
             fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-            m1_max = np.max(self.M1) if np.max(self.M1) > 0 else 1.0
-            m2_max = np.max(self.M2) if np.max(self.M2) > 0 else 1.0
+            m2_0_frame = self._get_spatial_frame(self.M2, t0)
+            m2_0_masked = np.ma.masked_where(self.wall_mask, m2_0_frame)
+            m2_max = np.max(m2_0_masked) if np.max(m2_0_masked) > 0 else 1.0
 
             def _style_2pop_axis(ax, title, rgb_img, t_idx):
                 ax.set_facecolor('#2c3e50')
@@ -215,16 +213,15 @@ class MFGPlotter:
                 ax.imshow(rgb_img, origin='lower', extent=self.extent, interpolation='nearest')
                 self._draw_goals(ax, t_idx)
 
-            rgb0 = self._build_combined_rgb(self._get_spatial_frame(self.M1, t0), self._get_spatial_frame(self.M2, t0), m1_max, m2_max)
-            rgbMid = self._build_combined_rgb(self._get_spatial_frame(self.M1, t_mid), self._get_spatial_frame(self.M2, t_mid), m1_max, m2_max)
-            rgbEnd = self._build_combined_rgb(self._get_spatial_frame(self.M1, t_end), self._get_spatial_frame(self.M2, t_end), m1_max, m2_max)
+            rgb0 = self._build_combined_rgb(self._get_spatial_frame(self.M1, t0), self._get_spatial_frame(self.M2, t0), stable_vmax, m2_max)
+            rgbMid = self._build_combined_rgb(self._get_spatial_frame(self.M1, t_mid), self._get_spatial_frame(self.M2, t_mid), stable_vmax, m2_max)
+            rgbEnd = self._build_combined_rgb(self._get_spatial_frame(self.M1, t_end), self._get_spatial_frame(self.M2, t_end), stable_vmax, m2_max)
 
             _style_2pop_axis(axes[0], "Start ($t=0$)", rgb0, t0)
             _style_2pop_axis(axes[1], f"Midpoint ($t={self.Dt * t_mid:.1f}s$)", rgbMid, t_mid)
             _style_2pop_axis(axes[2], f"End ($t={self.Dt * t_end:.1f}s$)", rgbEnd, t_end)
             axes[0].legend(loc='upper right')
         else:
-            # --- 1-POPULATION 2x2 DASHBOARD ---
             fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
             def _style_1pop_axis(ax, title, im, t_idx):
@@ -235,19 +232,17 @@ class MFGPlotter:
                 fig.colorbar(im, ax=ax, label='Value')
                 self._draw_goals(ax, t_idx)
 
-            m0_frame = self._get_spatial_frame(self.M1, t0)
-            m0_masked = np.ma.masked_where(self.wall_mask, m0_frame)
-            im1 = axes[0, 0].imshow(m0_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd')
+            im1 = axes[0, 0].imshow(m0_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax)
             _style_1pop_axis(axes[0, 0], "Initial Density $M$ ($t=0$)", im1, t0)
 
             mmid_frame = self._get_spatial_frame(self.M1, t_mid)
             mmid_masked = np.ma.masked_where(self.wall_mask, mmid_frame)
-            im2 = axes[0, 1].imshow(mmid_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd')
+            im2 = axes[0, 1].imshow(mmid_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax)
             _style_1pop_axis(axes[0, 1], f"Midpoint Density $M$ ($t={self.Dt * t_mid:.1f}s$)", im2, t_mid)
 
             mend_frame = self._get_spatial_frame(self.M1, t_end)
             mend_masked = np.ma.masked_where(self.wall_mask, mend_frame)
-            im3 = axes[1, 0].imshow(mend_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd')
+            im3 = axes[1, 0].imshow(mend_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax)
             _style_1pop_axis(axes[1, 0], f"Final Density $M$ ($t={self.Dt * t_end:.1f}s$)", im3, t_end)
 
             u0_frame = self._get_spatial_frame(self.U1, t0)
@@ -263,12 +258,19 @@ class MFGPlotter:
         plt.close(fig)
 
     def save_density_frames(self, output_dir="mfg_simulation_frames"):
-        """Saves individual PNG frames across all time steps."""
+        """Saves individual PNG frames across all time steps using t=0 stable color scaling."""
         os.makedirs(output_dir, exist_ok=True)
         print(f"Exporting animation PNG frames to './{output_dir}'...", flush=True)
 
-        m1_max = np.max(self.M1) if np.max(self.M1) > 0 else 1.0
-        m2_max = np.max(self.M2) if (self.M2 is not None and np.max(self.M2) > 0) else 1.0
+        # Scale vmax to t=0 initial density frame to preserve vibrant colors
+        m1_0_frame = self._get_spatial_frame(self.M1, 0)
+        m1_0_masked = np.ma.masked_where(self.wall_mask, m1_0_frame)
+        stable_vmax1 = np.max(m1_0_masked) if np.max(m1_0_masked) > 0 else 1.0
+
+        if self.M2 is not None:
+            m2_0_frame = self._get_spatial_frame(self.M2, 0)
+            m2_0_masked = np.ma.masked_where(self.wall_mask, m2_0_frame)
+            stable_vmax2 = np.max(m2_0_masked) if np.max(m2_0_masked) > 0 else 1.0
 
         for k in range(self.Nt + 1):
             fig, ax = plt.subplots(figsize=(6, 5), layout='constrained')
@@ -277,12 +279,12 @@ class MFGPlotter:
             m1_frame = self._get_spatial_frame(self.M1, k)
             if self.M2 is not None:
                 m2_frame = self._get_spatial_frame(self.M2, k)
-                rgb_img = self._build_combined_rgb(m1_frame, m2_frame, m1_max, m2_max)
+                rgb_img = self._build_combined_rgb(m1_frame, m2_frame, stable_vmax1, stable_vmax2)
                 ax.imshow(rgb_img, origin='lower', extent=self.extent, interpolation='nearest')
                 ax.set_title(f"Pop 1 (Red) & Pop 2 (Blue) - Time: {k * self.Dt:.2f}s")
             else:
                 m_masked = np.ma.masked_where(self.wall_mask, m1_frame)
-                im = ax.imshow(m_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=m1_max)
+                im = ax.imshow(m_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax1)
                 fig.colorbar(im, ax=ax, label='Density')
                 ax.set_title(f"Crowd Density - Time: {k * self.Dt:.2f}s")
 
@@ -315,16 +317,21 @@ class MFGPlotter:
         fig, ax = plt.subplots(figsize=(6, 5), layout='constrained')
         ax.set_facecolor('#2c3e50')
 
-        m1_max = np.max(self.M1) if np.max(self.M1) > 0 else 1.0
+        m1_0_frame = self._get_spatial_frame(self.M1, 0)
+        m1_0_masked = np.ma.masked_where(self.wall_mask, m1_0_frame)
+        stable_vmax1 = np.max(m1_0_masked) if np.max(m1_0_masked) > 0 else 1.0
+
         if self.M2 is not None:
-            m2_max = np.max(self.M2) if np.max(self.M2) > 0 else 1.0
-            rgb_img = self._build_combined_rgb(self._get_spatial_frame(self.M1, 0), self._get_spatial_frame(self.M2, 0), m1_max, m2_max)
+            m2_0_frame = self._get_spatial_frame(self.M2, 0)
+            m2_0_masked = np.ma.masked_where(self.wall_mask, m2_0_frame)
+            stable_vmax2 = np.max(m2_0_masked) if np.max(m2_0_masked) > 0 else 1.0
+
+            rgb_img = self._build_combined_rgb(self._get_spatial_frame(self.M1, 0), self._get_spatial_frame(self.M2, 0), stable_vmax1, stable_vmax2)
             im = ax.imshow(rgb_img, origin='lower', extent=self.extent, interpolation='nearest')
             title = ax.set_title("Pop 1 (Red) & Pop 2 (Blue) - Time: 0.00s")
         else:
-            m0_frame = self._get_spatial_frame(self.M1, 0)
-            m_masked = np.ma.masked_where(self.wall_mask, m0_frame)
-            im = ax.imshow(m_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=m1_max)
+            m_masked = np.ma.masked_where(self.wall_mask, m1_0_frame)
+            im = ax.imshow(m_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax1)
             fig.colorbar(im, ax=ax, label='Density')
             title = ax.set_title("Density - Time: 0.00s")
 
@@ -336,7 +343,7 @@ class MFGPlotter:
             m1_k = self._get_spatial_frame(self.M1, k)
             if self.M2 is not None:
                 m2_k = self._get_spatial_frame(self.M2, k)
-                new_rgb = self._build_combined_rgb(m1_k, m2_k, m1_max, m2_max)
+                new_rgb = self._build_combined_rgb(m1_k, m2_k, stable_vmax1, stable_vmax2)
                 im.set_data(new_rgb)
                 title.set_text(f"Pop 1 (Red) & Pop 2 (Blue) - Time: {k * self.Dt:.2f}s")
             else:
@@ -346,7 +353,6 @@ class MFGPlotter:
             return [im, title]
 
         ani = animation.FuncAnimation(fig, update, frames=self.Nt + 1, blit=True)
-
         try:
             ani.save(filename, writer='ffmpeg', fps=fps, dpi=150)
             print(f"--> Successfully exported MP4 video to '{filename}'.", flush=True)

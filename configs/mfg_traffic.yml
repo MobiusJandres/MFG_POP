@@ -19,6 +19,10 @@ Nt: 600
 max_iters: 25
 relaxation_theta: 0.1
 
+# Modeling parameters
+obstacle_penalty: 500.0
+goals_are_exits: true
+
 # # Dynamic Exit Door Trajectory Configurations
 # doors:
 #   - x1: "2.0 + 10.0 * sin(2 * pi * t / T)"

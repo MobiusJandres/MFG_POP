@@ -13,15 +13,32 @@ Nx: 100
 Ny: 100
 num_agents: 50
 
-# Target behavior toggle
-targets_are_exits: false  # Set to true if you want mass to exit at targets
+# Behavior Settings
+goals_are_exits: false # Set to true if you want mass to exit at goals
+obstacle_penalty: -50000.0
+running_cost_weight: 0.01
 
-# Custom Multiple Initial Target Placements [x, y] in physical meters
-# (Set to null/None if you prefer to use the goal positions from scen_file instead)
-targets:
-  - [100.0, 700.0]  # Target 1 (Top-Left)
-  - [700.0, 700.0]  # Target 2 (Top-Right)
-  - [384.0, 100.0]  # Target 3 (Bottom-Center)
+# Heterogeneous Goal Dictionaries
+goals:
+  # - type: "stationary"
+  #   position: [100.0, 700.0]
+
+  # - type: "prescribed"
+  #   position: [700.0, 700.0]
+  #   path_x: "700.0 + 50.0 * sin(2.0 * pi * t / T)"
+  #   path_y: "700.0"
+
+  - type: "evader"
+    position: [100.0, 700.0]
+    v_max: 25.0
+
+  - type: "evader"
+    position: [700.0, 700.0]
+    v_max: 25.0
+
+  - type: "evader"
+    position: [384.0, 100.0]
+    v_max: 25.0
 
 # Time & Solver Parameters
 T: 5.0
@@ -31,3 +48,4 @@ relaxation_theta: 0.1
 
 # Pursuit-Evasion Dynamics
 v_max_evader: 25.0
+enable_evader_swarm: true

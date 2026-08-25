@@ -110,7 +110,7 @@ def compute_FP_matrix_entries(m_prev, ukm1, omask_arr, door_mask_arr, Nx, Ny, Dx
 
 
 @jit(nopython=True, cache=True)
-def getFnU_2D(Unew_np1, Unew_n, Mk_np1, omask_arr, door_mask_n, running_cost_k, Nx, Ny, Dx, Dy, Dt):
+def getFnU_2D(Unew_np1, Unew_n, Mk_np1, omask_arr, door_mask_n, running_cost_k, Nx, Ny, Dx, Dy, Dt, obstacle_penalty=500.0):
     """Computes HJB residual with door Dirichlet conditions and soft running costs."""
     FnU = np.zeros((Nx, Ny))
     for i in range(Nx):
@@ -120,7 +120,8 @@ def getFnU_2D(Unew_np1, Unew_n, Mk_np1, omask_arr, door_mask_n, running_cost_k, 
                 continue
 
             if omask_arr[i, j] == 0:
-                FnU[i, j] = Unew_n[i, j] - 500.0
+                # Dynamic obstacle potential barrier
+                FnU[i, j] = Unew_n[i, j] - obstacle_penalty
                 continue
 
             ip1 = i + 1 if (i < Nx - 1 and omask_arr[i + 1, j] == 1) else i
@@ -139,7 +140,10 @@ def getFnU_2D(Unew_np1, Unew_n, Mk_np1, omask_arr, door_mask_n, running_cost_k, 
             laplacian_y = (Unew_n[i, jp1] - 2 * Unew_n[i, j] + Unew_n[i, jm1]) / (Dy ** 2)
             diffusion = -0.05 * (laplacian_x + laplacian_y)
 
-            hamiltonian = H_withM(Mk_np1[i, j], p1, p2, p3, p4)
+            hamiltonian = -8.0 * (1.0 / (1.0 + Mk_np1[i, j]) ** 0.75) * (
+                ppart(p1)**2 + npart(p2)**2 + ppart(p3)**2 + npart(p4)**2
+            ) + 0.1
+
             FnU[i, j] = time_deriv + diffusion + hamiltonian + running_cost_k[i, j]
 
     return FnU

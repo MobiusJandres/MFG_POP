@@ -22,7 +22,7 @@ class MAP2PDE:
         Ly: float = 768.0,
         Nx: int = 100,
         Ny: int = 100,
-        custom_targets: list|None = None,
+        custom_goals: list|None = None,
     ):
         self.map_filepath = map_filepath
         self.scen_filepath = scen_filepath
@@ -35,10 +35,9 @@ class MAP2PDE:
         self.X, self.Y = None, None
         self._m0 = None
         self.custom_m0 = None
-        self.custom_goals = custom_targets
+        self.custom_goals = custom_goals
 
     def parse_files(self, num_agents: int|None = None, start_idx: int = 0):
-        """Parses .map and .scen files, supporting agent offset slicing."""
         if self.map_filepath or self.scen_filepath:
             if not self.map_filepath or not os.path.exists(self.map_filepath):
                 raise FileNotFoundError(f"[MAP2PDE Error] Map file not found at: '{self.map_filepath}'")
@@ -140,6 +139,7 @@ class MAP2PDE:
 
         self._m0 = m_0
         return self._m0
+    
 
     @property
     def m0(self):
@@ -158,7 +158,14 @@ class MAP2PDE:
     def get_goals(self):
         """Returns active goal positions."""
         if self.custom_goals is not None:
-            return [tuple(float(c) for c in t) for t in self.custom_goals]
+            goals = []
+            for item in self.custom_goals:
+                if isinstance(item, dict):
+                    pos = item['position']
+                    goals.append((float(pos[0]), float(pos[1])))
+                else:
+                    goals.append((float(item[0]), float(item[1])))
+            return goals
 
         if not hasattr(self, 'grid_shape') or self.grid_shape == (0, 0):
             return []
@@ -302,6 +309,9 @@ def parse_motion_expr(expr_str, T_final, room_width, room_height):
 
 def build_door_trajectories_from_config(door_configs, T_final, room_width=50.0, room_height=50.0):
     """Converts YAML door configuration list into callable trajectory dictionaries."""
+    if not door_configs:
+        return []
+        
     door_trajectories = []
     for cfg in door_configs:
         door_trajectories.append({

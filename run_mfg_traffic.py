@@ -1,7 +1,6 @@
 """
-Entry point for original MFG Traffic scenario using primitive shapes and moving doors.
+Traffic Evacuation Mean Field Game entry point.
 """
-import numpy as np
 from args.Options import Options
 from mfgames.geometry import (
     MFGTrafficGeometry,
@@ -11,68 +10,58 @@ from mfgames.geometry import (
 from mfgames.problem import MFGSolver
 from mfgames.plotting import MFGPlotter
 
+# Default static exit doors at bottom-left and bottom-right corners
+DEFAULT_STATIC_DOORS = [
+    {'x1': "2.0", 'x2': "10.0", 'y1': "0.0", 'y2': "5.0"},
+    {'x1': "room_width - 10.0", 'x2': "room_width - 2.0", 'y1': "0.0", 'y2': "5.0"}
+]
+
 
 def main():
     options = Options()
     options.parser.set_defaults(config='configs/mfg_traffic.yml')
-    args = options.parseArgs()
+    options.parser.add_argument('--obstacle_penalty', type=float, default=500.0, help='Obstacle cell potential penalty (+500 for traffic)')
 
+    args = options.parseArgs()
     print(f"Results will be saved to: {args.save_dir}", flush=True)
 
-    # 1. Initialize geometry and spatial mesh
-    pde_mesh = MFGTrafficGeometry(Lx=args.room_width, Ly=args.room_height, Nx=args.Nx, Ny=args.Ny)
-    pde_mesh.build_spatial_mesh()
-
-    # 2. Build door trajectories from YAML config or fallback defaults
-    if hasattr(args, 'doors') and args.doors:
-        door_trajectories = build_door_trajectories_from_config(
-            args.doors,
-            T_final=args.T,
-            room_width=args.room_width,
-            room_height=args.room_height
-        )
-    else:
-        # Default STATIC door trajectories fallback:
-        # Left door: x in [0, 10], y in [0, 5]
-        # Right door: x in [40, 50], y in [0, 5]
-        door_trajectories = [
-            {
-                'x1': lambda t: 0.0,
-                'x2': lambda t: 10.0,
-                'y1': lambda t: 0.0,
-                'y2': lambda t: 5.0,
-            },
-            {
-                'x1': lambda t: args.room_width - 10.0,
-                'x2': lambda t: args.room_width,
-                'y1': lambda t: 0.0,
-                'y2': lambda t: 5.0,
-            }
-        ]
-
-    door_mask_3d = create_moving_door_mask(
-        door_trajectories,
-        Nt=args.Nt,
+    # Initialize traffic geometry
+    mesh = MFGTrafficGeometry(
+        Lx=args.room_width,
+        Ly=args.room_height,
         Nx=args.Nx,
-        Ny=args.Ny,
-        X=pde_mesh.X,
-        Y=pde_mesh.Y,
-        T=args.T
+        Ny=args.Ny
+    )
+    mesh.build_spatial_mesh()
+
+    # Extract doors from config or fall back to DEFAULT_STATIC_DOORS
+    doors_cfg = getattr(args, 'doors', None) or DEFAULT_STATIC_DOORS
+
+    # Build door trajectories from config
+    door_trajectories = build_door_trajectories_from_config(
+        doors_cfg, args.T, args.room_width, args.room_height
+    )
+    door_mask_3d = create_moving_door_mask(
+        door_trajectories, args.Nt, args.Nx, args.Ny, mesh.X, mesh.Y, args.T
     )
 
-    # 3. Solve HJB-FP coupled system
-    mfg_solver = MFGSolver(
-        pde_mesh_data=pde_mesh,
+    goals_are_exits = getattr(args, 'goals_are_exits', True)
+
+    # Instantiate solver with positive obstacle penalty
+    solver = MFGSolver(
+        pde_mesh_data=mesh,
         T=args.T,
         Nt=args.Nt,
         thetaUM=args.relaxation_theta,
         door_mask_3d=door_mask_3d,
-        is_pursuit_evasion=False
+        goals_are_exits=goals_are_exits,
+        obstacle_penalty=args.obstacle_penalty
     )
-    mfg_solver.run_picard_system(max_iters=args.max_iters)
 
-    # 4. Generate visualizations and animations
-    plotter = MFGPlotter(pde_mesh_data=pde_mesh, solver_instance=mfg_solver)
+    solver.run_picard_system(max_iters=args.max_iters)
+
+    # Generate visualizations
+    plotter = MFGPlotter(pde_mesh_data=mesh, solver_instance=solver)
 
     dashboard_path = args.save_dir / "snapshots_dashboard.png"
     plotter.plot_snapshots(output_file=str(dashboard_path))
@@ -80,10 +69,10 @@ def main():
     frames_dir = args.save_dir / "frames"
     plotter.save_density_frames(output_dir=str(frames_dir))
 
-    animation_path = args.save_dir / "traffic_animation.gif"
+    animation_path = args.save_dir / "traffic_simulation.gif"
     plotter.create_movie(frame_dir=str(frames_dir), output_file=str(animation_path), fps=15)
 
-    print("MFG Traffic run completed successfully!", flush=True)
+    print("Traffic run completed successfully!", flush=True)
 
 
 if __name__ == "__main__":

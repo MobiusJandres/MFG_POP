@@ -5,8 +5,8 @@ results_dir: "results"
 timezone: "UTC"
 
 # Environment & Grid Setup
-map_file: "Maps/AcrosstheCape.map"
-scen_file: "Scenarios/AcrosstheCape_1g.map.scen"
+map_file: "MAP2PDE/Maps/AcrosstheCape.map"
+scen_file: "MAP2PDE/Scenarios/AcrosstheCape_1g.map.scen"
 room_width: 768.0
 room_height: 768.0
 Nx: 100

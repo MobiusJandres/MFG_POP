@@ -15,17 +15,16 @@ Each solver solves a coupled system of PDEs via Picard iteration:
 - Hamilton-Jacobi-Bellman (HJB) equation: Backward in time, computes optimal control (value function u)
 - Kolmogorov-Fokker-Planck (KFP) equation: Forward in time, evolves population density (m)
 
-The Picard iteration alternates between solving HJB given density m, then solving KFP given value u,
-with under-relaxation (thetaUM parameter) to stabilize convergence.
-
-See notes.tex for detailed PDE formulations and discretization schemes.
+MFGSolver consolidates time-stepping loops for both static exit doors
+and dynamic target goals into a unified execution path. The Picard iteration alternates
+between solving HJB given density m, then solving KFP given value u, with under-relaxation
+(thetaUM parameter) to stabilize convergence.
 """
 import time
 import numpy as np
 import scipy.sparse as sparse
 import scipy.sparse.linalg
 from mfgames.evasion import Goal
-from mfgames.solvers import solveFP_2D, solveHJB_withM
 from mfgames.numerics import (
     compute_FP_matrix_entries,
     getFnU_2D,
@@ -38,15 +37,15 @@ from mfgames.numerics import (
 
 class MFGSolver:
     """
-    Mean Field Game solver for single-population systems with goal-seeking behavior.
+    Mean Field Game solver for single-population systems with goal-seeking behavior[cite: 9].
 
-    This solver handles drone swarms navigating toward static or dynamic goals (targets)
-    in a 2D spatial domain with obstacles. It supports both static exit locations and
-    moving targets (pursuit-evasion scenarios where goals react to swarm density).
+    This solver handles drone swarms navigating toward static or dynamic goals in a 2D
+    spatial domain with obstacles[cite: 9]. It handles static exit locations, moving doors,
+    and reactive target goals (where goals flee from pursuer density)[cite: 9].
 
-    The solver uses Picard iteration to solve the coupled HJB-KFP system. The value
+    The solver uses Picard iteration to solve the coupled HJB-KFP system[cite: 9]. The value
     function u represents cost-to-go to the nearest goal, while the density m represents
-    the spatial distribution of the swarm over time.
+    the spatial distribution of the swarm over time[cite: 9].
 
     Attributes:
         pde_mesh (PDEMeshData): Spatial mesh containing geometry, obstacles, and initial conditions
@@ -77,13 +76,13 @@ class MFGSolver:
         Nt: int = 100,
         thetaUM: float = 0.1,
         door_mask_3d=None,
-        goal_configs: list|None = None,
+        goal_configs: list | None = None,
         goals_are_exits: bool = False,
-        obstacle_penalty: float = -500.0,
-        running_cost_weight: float = 0.01
+        obstacle_penalty: float | None = None,
+        running_cost_weight: float = 0.01,
     ):
         """
-        Initialize the Mean Field Game solver.
+        Initialize the Mean Field Game solver[cite: 9].
 
         Args:
             pde_mesh_data (PDEMeshData): Mesh object containing spatial grid, obstacles,
@@ -113,24 +112,24 @@ class MFGSolver:
         self.goals_are_exits = goals_are_exits
         self.running_cost_weight = running_cost_weight
 
-        # Dynamically scale obstacle penalty relative to max potential drop on grid.
-        # This ensures obstacles remain strongly repulsive regardless of domain size.
+        # Dynamically scale obstacle penalty relative to max potential drop on grid if not provided[cite: 9].
+        # This ensures obstacles remain strongly repulsive regardless of domain size[cite: 9].
         if obstacle_penalty is not None:
             self.obstacle_penalty = obstacle_penalty
         else:
             max_grid_dist_sq = self.Lx**2 + self.Ly**2
             max_cost = self.running_cost_weight * max_grid_dist_sq
-            self.obstacle_penalty = -5.0 * max_cost        
+            self.obstacle_penalty = -5.0 * max_cost
 
         self.omask = pde_mesh_data.get_pde_obstacle_mask()
         self.m0 = pde_mesh_data.build_initial_density()
 
-        # Allocate solution arrays: M for density, U for value function
+        # Allocate solution arrays: M for density, U for value function[cite: 9]
         self.M = np.zeros((self.Nt + 1, self.Nx, self.Ny))
         self.U = np.zeros((self.Nt + 1, self.Nx, self.Ny))
         self.M[0] = self.m0
 
-        # Automatic Goal detection from mesh data or explicit config
+        # Automatic Goal detection from mesh data or explicit config[cite: 9]
         raw_goals = goal_configs if goal_configs is not None else pde_mesh_data.get_goals()
         if raw_goals:
             self.goal = Goal(
@@ -139,9 +138,9 @@ class MFGSolver:
                 Dt=self.Dt,
                 T=T,
                 Lx=self.Lx,
-                Ly=self.Ly
+                Ly=self.Ly,
             )
-            # Alias for backward compatibility with MFGPlotter
+            # Alias for backward compatibility with MFGPlotter[cite: 9]
             self.evader_swarm = self.goal
             self.door_mask_3d = self._build_dynamic_goal_doors(self.goal.Y_trajectories)
         else:
@@ -154,15 +153,15 @@ class MFGSolver:
 
     def _build_dynamic_goal_doors(self, goal_trajectories):
         """
-        Construct time-dependent exit mask around moving goals.
+        Construct time-dependent exit mask around moving goals where is_exit is True.
 
         For each goal marked with is_exit=True, this creates a small spatial region
-        (±Dx, ±Dy) around the goal's position at each timestep where the boundary
-        condition u=0 is applied (absorbing boundary).
+        (±Dx, ±Dy) around the goal's position at each timestep where boundary condition
+        u=0 is applied (absorbing boundary)[cite: 9].
 
         Args:
             goal_trajectories (ndarray): Goal positions of shape (Nt+1, num_goals, 2)
-                where last dimension is (x, y) coordinates
+                where last dimension is (x, y) coordinates[cite: 9]
 
         Returns:
             ndarray: Door mask of shape (Nt+1, Nx, Ny) with 1.0 at exit cells, 0.0 elsewhere
@@ -196,11 +195,14 @@ class MFGSolver:
             ndarray: Running cost field of shape (Nx, Ny) representing weighted squared
                 distance to nearest goal at each grid point
         """
+        if goal_positions_k is None:
+            return np.zeros((self.Nx, self.Ny))
+
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
         min_dist_sq = np.full((self.Nx, self.Ny), 1e6)
-        # Compute distance to each goal and keep minimum
+        # Compute distance to each goal and keep minimum[cite: 9]
         for gx, gy in goal_positions_k:
-            dist_sq = (X - gx)**2 + (Y - gy)**2
+            dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
             min_dist_sq = np.minimum(min_dist_sq, dist_sq)
         return self.running_cost_weight * min_dist_sq
 
@@ -212,7 +214,7 @@ class MFGSolver:
         under the transport field induced by the optimal control (derived from gradient
         of value function U). Uses implicit Euler time discretization.
 
-        Mathematical formulation (see notes.tex):
+        Mathematical formulation:
             ∂m/∂t - ∇·(m ∇H_p(x,∇u)) = 0
         where H_p is the momentum gradient of the Hamiltonian.
 
@@ -227,7 +229,7 @@ class MFGSolver:
         m[0] = self.m0
         N_total = self.Nx * self.Ny
 
-        # Time-stepping loop: implicit solve at each timestep
+        # Time-stepping loop: implicit solve at each timestep[cite: 9]
         for k in range(1, self.Nt + 1):
             rows, cols, vals, b = compute_FP_matrix_entries(
                 m[k - 1], U_trajectory[k - 1], self.omask, door_mask_3d[k - 1],
@@ -240,33 +242,35 @@ class MFGSolver:
 
     def solve_backward_HJB_step(self, M_trajectory, goal_trajectories, door_mask_3d):
         """
-        Solve the Hamilton-Jacobi-Bellman (HJB) equation backward in time.
+        Solve the Hamilton-Jacobi-Bellman (HJB) equation backward in time[cite: 9].
 
-        The HJB equation computes the optimal value function u, which represents the
-        cost-to-go from any position to the goals. The equation is nonlinear due to
-        the Hamiltonian, requiring Newton iteration at each timestep. Uses implicit
-        Euler time discretization.
+        The HJB equation computes optimal value function u, which represents cost-to-go
+        from any position to goals[cite: 9]. The equation is nonlinear due to the Hamiltonian,
+        requiring Newton iteration at each timestep[cite: 9]. Uses implicit Euler discretization[cite: 9].
 
-        Mathematical formulation (see notes.tex):
-            ∂u/∂t + H(x, m, ∇u) = 0
-        where H is the Hamiltonian (typically -|∇u|²/(congestion term) + running cost).
+        Mathematical formulation:
+            $$-\\frac{\\partial u}{\\partial t} + H(x, m, \\nabla u) - \\nu \\Delta u = 0$$
 
         Args:
-            M_trajectory (ndarray): Density trajectory, shape (Nt+1, Nx, Ny)
-            goal_trajectories (ndarray): Goal positions, shape (Nt+1, num_goals, 2)
-            door_mask_3d (ndarray): Time-dependent exit mask, shape (Nt+1, Nx, Ny)
+            M_trajectory (ndarray): Density trajectory, shape (Nt+1, Nx, Ny)[cite: 9]
+            goal_trajectories (ndarray|None): Goal positions, shape (Nt+1, num_goals, 2) or None[cite: 9]
+            door_mask_3d (ndarray): Time-dependent exit mask, shape (Nt+1, Nx, Ny)[cite: 9]
 
         Returns:
-            ndarray: Value function u of shape (Nt+1, Nx, Ny)
+            ndarray: Value function u of shape (Nt+1, Nx, Ny)[cite: 9]
         """
         u = np.zeros_like(self.U)
-        # Terminal condition: cost is distance to goal at final time
-        running_cost_Nt = self.compute_running_cost(goal_trajectories[self.Nt])
-        u[self.Nt] = -running_cost_Nt
+
+        # Terminal condition at t = T
+        if goal_trajectories is not None:
+            running_cost_Nt = self.compute_running_cost(goal_trajectories[self.Nt])
+            u[self.Nt] = -running_cost_Nt
+        else:
+            u[self.Nt] = np.zeros((self.Nx, self.Ny))
 
         # Backward time-stepping loop
         for k in range(self.Nt - 1, -1, -1):
-            running_cost_k = self.compute_running_cost(goal_trajectories[k])
+            running_cost_k = self.compute_running_cost(goal_trajectories[k]) if goal_trajectories is not None else np.zeros((self.Nx, self.Ny))
             Unew_n = np.copy(u[k + 1])
             N_total = self.Nx * self.Ny
 
@@ -287,11 +291,14 @@ class MFGSolver:
                 A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()
                 b = A.dot(Unew_n.flatten()) - FnU_flat
 
-                # Apply obstacle penalty as Dirichlet-like boundary condition
+                # Apply boundary conditions: Dirichlet u=0 at exit doors, potential penalty at obstacles
                 for i in range(self.Nx):
                     for j in range(self.Ny):
-                        if self.omask[i, j] == 0:
-                            b[i * self.Ny + j] = self.obstacle_penalty
+                        ind = i * self.Ny + j
+                        if door_mask_3d[k, i, j] == 1:
+                            b[ind] = 0.0
+                        elif self.omask[i, j] == 0:
+                            b[ind] = self.obstacle_penalty
 
                 # Newton update: solve A * U_new = b
                 Unres = sparse.linalg.spsolve(A, b).reshape((self.Nx, self.Ny))
@@ -333,35 +340,24 @@ class MFGSolver:
             start_time = time.time()
             print(f"\n>>> Macro Picard Loop Execution: {iiter} / {max_iters}", flush=True)
 
+            goal_trajectories = self.goal.Y_trajectories if self.goal is not None else None
+            door_mask = self.door_mask_3d
+
+            # Step 1: Solve HJB backward in time
+            U_temp = self.solve_backward_HJB_step(self.M, goal_trajectories, door_mask)
+            U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
+
+            # Step 2: Solve FP forward in time
+            M_temp = self.solve_forward_FP_step(U_new, door_mask)
+            M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
+
+            # Step 3: Update dynamic goals (if present)
             if self.goal is not None:
-                # Dynamic goal case: solve HJB-KFP with moving targets
-                current_door_mask = self._build_dynamic_goal_doors(self.goal.Y_trajectories)
-
-                U_temp = self.solve_backward_HJB_step(self.M, self.goal.Y_trajectories, current_door_mask)
-                U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
-
-                M_temp = self.solve_forward_FP_step(U_new, current_door_mask)
-                M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
-
-                # Update goal positions based on density distribution (e.g., evading high density)
                 Y_temp = self.goal.update_positions(M_new, self.omask, self.Dx, self.Dy, self.Lx, self.Ly)
                 Y_new = self.thetaUM * Y_temp + (1.0 - self.thetaUM) * self.goal.Y_trajectories
-
                 y_err = np.linalg.norm(Y_new - self.goal.Y_trajectories)
                 self.goal.Y_trajectories = np.copy(Y_new)
             else:
-                # Static goal case: standard HJB-KFP with fixed exits
-                U_temp = solveHJB_withM(
-                    self.U, self.M, self.door_mask_3d, self.omask, None,
-                    self.Nx, self.Ny, self.Nt, self.Dx, self.Dy, self.Dt
-                )
-                U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
-
-                M_temp = solveFP_2D(
-                    self.m0, U_new, self.door_mask_3d, self.omask,
-                    self.Nx, self.Ny, self.Nt, self.Dx, self.Dy, self.Dt
-                )
-                M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
                 y_err = 0.0
 
             # Compute L2 residuals for convergence check
@@ -464,8 +460,7 @@ class MFG2PopSolver:
         m = np.zeros((self.Nt + 1, self.Nx, self.Ny))
         m[0] = m0
         N_total = self.Nx * self.Ny
-
-        # Time-stepping loop with implicit solve
+    
         for k in range(1, self.Nt + 1):
             rows, cols, vals, b = compute_FP_matrix_entries_2Pop(
                 m[k - 1], M_other_trajectory[k - 1], U_trajectory[k - 1],
@@ -520,7 +515,7 @@ class MFG2PopSolver:
     def solve_backward_HJB(self, M_trajectory, M_trajectory_other, U_temp, g_x, pop):
         """
         Solve the Hamilton-Jacobi-Bellman equation backward in time for one population.
-
+        
         Similar to single-population HJB, but the Hamiltonian now depends on both this
         population's density and the other population's density (game-theoretic coupling).
         Uses Newton iteration at each timestep.
@@ -595,7 +590,7 @@ class MFG2PopSolver:
             # Solve KFP for both populations with updated value functions
             M1_temp = self.solve_forward_FP(U1_new, self.m0_1, self.M2)
             M2_temp = self.solve_forward_FP(U2_new, self.m0_2, self.M1)
-
+            
             # Apply under-relaxation to densities
             M1_new = self.thetaUM * M1_temp + (1.0 - self.thetaUM) * self.M1
             M2_new = self.thetaUM * M2_temp + (1.0 - self.thetaUM) * self.M2

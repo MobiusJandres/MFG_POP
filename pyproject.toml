@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mfgames"
+version = "0.1.0"
+description = "A Mean Field Games (MFG) library for modeling drone traffic flow and pursuit-evasion dynamics."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+keywords = [
+    "mean-field-games", 
+    "pde", 
+    "optimal-control", 
+    "drone-swarm", 
+    "pursuit-evasion", 
+    "numba"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+]
+
+# Mandatory runtime dependencies required by numerics/solvers/plotting
+dependencies = [
+    "numpy>=1.26.4",
+    "scipy>=1.10.1",
+    "matplotlib>=3.11.1",
+    "numba>=0.66.0",
+    "pyyaml>=6.0.1",
+    "pillow>=9.3.0",
+]
+
+# Optional dependencies for MP4 video export or development
+[project.optional-dependencies]
+video = [
+    "imageio>=2.22.0",
+]
+dev = [
+    "pytest>=7.0",
+    "black",
+]
+
+# Explicit package discovery (prevents bundling 'Output', 'configs', 'args', etc.)
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mfgames*"]

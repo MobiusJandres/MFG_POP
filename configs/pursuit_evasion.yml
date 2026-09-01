@@ -1,0 +1,51 @@
+# Core Experiment Metadata
+exp_name: "pursuit_evasion_suite"
+run_name: "multi_target_evasion"
+results_dir: "results"
+timezone: "UTC"
+
+# Environment & Grid Setup
+map_file: "MAP2PDE/Maps/AcrosstheCape.map"
+scen_file: "MAP2PDE/Scenarios/AcrosstheCape_1g.map.scen"
+room_width: 768.0
+room_height: 768.0
+Nx: 100
+Ny: 100
+num_agents: 50
+
+# Behavior Settings
+goals_are_exits: false # Set to true if you want mass to exit at goals
+obstacle_penalty: -50000.0
+running_cost_weight: 0.01
+
+# Heterogeneous Goal Dictionaries
+goals:
+  # - type: "stationary"
+  #   position: [100.0, 700.0]
+
+  # - type: "prescribed"
+  #   position: [700.0, 700.0]
+  #   path_x: "700.0 + 50.0 * sin(2.0 * pi * t / T)"
+  #   path_y: "700.0"
+
+  - type: "evader"
+    position: [100.0, 700.0]
+    v_max: 25.0
+
+  - type: "evader"
+    position: [700.0, 700.0]
+    v_max: 25.0
+
+  - type: "evader"
+    position: [384.0, 100.0]
+    v_max: 25.0
+
+# Time & Solver Parameters
+T: 5.0
+Nt: 150
+max_iters: 15
+relaxation_theta: 0.1
+
+# Pursuit-Evasion Dynamics
+v_max_evader: 25.0
+enable_evader_swarm: true

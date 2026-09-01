@@ -1,0 +1,33 @@
+# Core Experiment Metadata
+exp_name: "2pop_suite"
+run_name: "predator_prey_interaction"
+results_dir: "results"
+timezone: "UTC"
+
+# Environment & Grid Setup
+map_file: "MAP2PDE/Maps/AcrosstheCape.map"
+scen_file: "MAP2PDE/Scenarios/AcrosstheCape_1g.map.scen"
+room_width: 768.0
+room_height: 768.0
+Nx: 100
+Ny: 100
+num_agents: 1
+
+# Time & Solver Parameters
+T: 300.0
+Nt: 3000
+max_iters: 15
+relaxation_theta: 0.1
+
+# Initial Gaussian Blob Placements [x_center, y_center, sigma, amplitude]
+pop1_blobs:
+  - [400.0, 575.0, 40.0, 5.0]
+
+pop2_blobs:
+  - [400.0, 175.0, 40.0, 5.0]
+
+# Target Goal Coordinates [x, y]
+pop1_goals: []                   # Pop 1 has no target exit goal
+
+pop2_goals:
+  - [400.0, 700.0]              # Pop 2 target exit goal

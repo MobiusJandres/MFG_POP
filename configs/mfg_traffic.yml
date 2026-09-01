@@ -1,0 +1,36 @@
+# Core Experiment Metadata
+exp_name: "mfg_traffic_suite"
+run_name: "evacuation_flow"
+results_dir: "results"
+timezone: "UTC"
+
+# Environment & Grid Setup
+map_file: null
+scen_file: null
+room_width: 50.0
+room_height: 50.0
+Nx: 75
+Ny: 75
+num_agents: 0
+
+# Time & Solver Parameters (Matching original script: T=100.0s, Nt=600)
+T: 100.0
+Nt: 600
+max_iters: 25
+relaxation_theta: 0.1
+
+# Modeling parameters
+obstacle_penalty: 500.0
+goals_are_exits: true
+
+# # Dynamic Exit Door Trajectory Configurations
+# doors:
+#   - x1: "2.0 + 10.0 * sin(2 * pi * t / T)"
+#     x2: "10.0 + 10.0 * sin(2 * pi * t / T)"
+#     y1: "0.0"
+#     y2: "5.0"
+
+#   - x1: "room_width - 10.0 - 10.0 * sin(2 * pi * t / T)"
+#     x2: "room_width - 10.0 * sin(2 * pi * t / T)"
+#     y1: "0.0"
+#     y2: "5.0"

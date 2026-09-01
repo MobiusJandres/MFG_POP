@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.png
+*.npz
+*.egg-info*
+archive/
+
+# Output directories
+*/*Output*/
+*/*Results*/
+*/*results*/
+*results*/
+
+# System files
+.DS_Store

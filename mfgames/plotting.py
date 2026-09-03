@@ -186,16 +186,16 @@ class MFGPlotter:
         goals_1 (list): List of (x, y) goal positions for population 1.
         goals_2 (list): List of (x, y) goal positions for population 2.
     """
-
     def __init__(self, pde_mesh_data_1=None, solver_instance=None, pde_mesh_data_2=None, pde_mesh_data=None):
         """
         Initialize MFGPlotter with mesh geometry and solver state.
 
         Args:
-            pde_mesh_data_1: Primary mesh data object containing domain geometry (Lx, Ly)
-                and goal positions. If None, falls back to pde_mesh_data.
+            pde_mesh_data_1: Primary mesh data object containing domain geometry (Lx, Ly),
+                spatial grid coordinates (X, Y), cell spacing (dx, dy), and goal positions.
+                If None, falls back to pde_mesh_data.
             solver_instance: Solver object containing computed state arrays (M, U, M1, M2,
-                U1, U2), temporal parameters (Dt, Nt), and obstacle mask (omask).
+                U1, U2), temporal parameters (Dt, Nt), obstacle mask (omask), and goal manager.
             pde_mesh_data_2: Optional secondary mesh for 2-population simulations.
             pde_mesh_data: Deprecated alias for pde_mesh_data_1 (backwards compatibility).
 
@@ -206,18 +206,29 @@ class MFGPlotter:
         if mesh_1 is None or solver_instance is None:
             raise ValueError("Must provide mesh data and solver instance to MFGPlotter.")
 
+        # Spatial domain dimensions and discretization steps
         self.Lx, self.Ly = mesh_1.Lx, mesh_1.Ly
+        self.Dx = getattr(mesh_1, 'dx', getattr(solver_instance, 'Dx', None))
+        self.Dy = getattr(mesh_1, 'dy', getattr(solver_instance, 'Dy', None))
+        self.X = getattr(mesh_1, 'X', None)
+        self.Y = getattr(mesh_1, 'Y', None)
+
+        # Temporal parameters
         self.Dt, self.Nt = solver_instance.Dt, solver_instance.Nt
 
-        # Flexible extraction: try 2-pop fields (M1/M2) first, fall back to 1-pop (M/U)
+        # Flexible state extraction: try 2-pop fields (M1/M2) first, fall back to 1-pop (M/U)
         self.M1 = getattr(solver_instance, 'M1', getattr(solver_instance, 'M', None))
         self.M2 = getattr(solver_instance, 'M2', None)
         self.U1 = getattr(solver_instance, 'U1', getattr(solver_instance, 'U', None))
         self.U2 = getattr(solver_instance, 'U2', None)
 
-        self.evader_trajectories = getattr(getattr(solver_instance, 'evader_swarm', None), 'Y_trajectories', None)
+        # Goal manager and trajectory tracking
+        self.goal_instance = getattr(solver_instance, 'goal', getattr(solver_instance, 'evader_swarm', None))
+        self.evader_trajectories = getattr(self.goal_instance, 'Y_trajectories', None)
+
+        # Spatial masks
         self.door_mask = getattr(solver_instance, 'door_mask', getattr(solver_instance, 'door_mask_3d', None))
-        self.door_mask_3d = self.door_mask
+        self.door_mask_3d = self.door_mask  # Alias for backward compatibility
         self.wall_mask = (solver_instance.omask == 0)
         self.extent = [0, self.Lx, 0, self.Ly]
 
@@ -276,10 +287,39 @@ class MFGPlotter:
             ax: Matplotlib axis to draw on.
             t_idx: Time index for extracting time-dependent features (default: 0).
         """
-        if self.evader_trajectories is not None:
-            # Pursuit-evasion: plot time-dependent evader positions
-            ev = self.evader_trajectories[t_idx]
-            ax.scatter(ev[:, 0], ev[:, 1], color='#00f2fe', marker='X', s=70, edgecolor='black', linewidth=0.8, label='Evaders', zorder=10)
+        if self.evader_trajectories is not None and self.goal_instance is not None:
+            X, Y = self.X, self.Y
+            
+            for g_idx, g_info in enumerate(self.goal_instance.goals):
+                pos = self.evader_trajectories[t_idx, g_idx]
+                cap = g_info.get('capacity', float('inf'))
+                
+                # Calculate cumulative mass absorbed by goal g up to frame t_idx
+                cum_mass = 0.0
+                if np.isfinite(cap) and self.M1 is not None:
+                    for k in range(t_idx + 1):
+                        gx, gy = self.evader_trajectories[k, g_idx]
+                        region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
+                        cum_mass += np.sum(self.M1[k][region]) * self.Dx * self.Dy * self.Dt
+
+                # Set color: Red (#ff2222) if saturated, Cyan/Blue (#00f2fe) if active
+                is_saturated = cum_mass >= cap
+                marker_color = '#ff2222' if is_saturated else '#00f2fe'
+                
+                ax.scatter(
+                    pos[0], pos[1], 
+                    color=marker_color, 
+                    marker='X', 
+                    s=80, 
+                    edgecolor='black', 
+                    linewidth=0.8, 
+                    zorder=10
+                )
+                
+            if self.door_mask is not None and np.sum(self.door_mask[t_idx]) > 0:
+                xs = np.linspace(0, self.Lx, self.M1.shape[1])
+                ys = np.linspace(0, self.Ly, self.M1.shape[2])
+                ax.contour(xs, ys, self.door_mask[t_idx].T, levels=[0.5], colors="lime", linewidths=2)
         else:
             # Standard MFG: plot static goal locations
             if self.goals_1:

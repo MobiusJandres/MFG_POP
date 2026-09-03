@@ -10,6 +10,7 @@ supporting four primary operational behaviors:
    repulsive force fields (implements evasion game dynamics)
 4. Capacity-Constrained: Exit goals or landing platforms with maximum mass ceilings
    that saturate and deactivate after absorbing a specified cumulative density threshold.
+   Once saturated, moving targets freeze at their saturation location.
 
 The evasive goal dynamics use a continuous repulsive potential field computed from
 the swarm density distribution M(x,y,t), enabling adversarial game scenarios where
@@ -83,6 +84,7 @@ class Goal:
        - Stores finite capacity limit C_max (cumulative density units allowed)
        - Automatically saturates once total absorbed mass reaches C_max
        - Deactivates exit Dirichlet conditions or attenuates HJB attraction cost
+       - Freezes target position at the saturation location upon reaching C_max
 
     Attributes:
         Nt (int): Number of time steps in simulation
@@ -258,47 +260,58 @@ class Goal:
         y_coords = np.linspace(Dy / 2, Ly - Dy / 2, Ny)
         X_grid, Y_grid = np.meshgrid(x_coords, y_coords, indexing='ij')
 
+        cumulative_mass = np.zeros(self.num_goals)
+
         # Time-step loop: update all goals from time k to k+1
         for k in range(self.Nt):
-            M_k = M_field[k] # Swarm density at current time step
+            M_k = M_field[k]  # Swarm density at current time step
             total_mass = np.sum(M_k) # Total mass for zero-density check
 
             for g, g_info in enumerate(self.goals):
+                cap = g_info.get('capacity', float('inf'))
+                curr_x, curr_y = new_trajectories[k, g]
+
+                # Track cumulative mass entering goal region up to step k
+                if np.isfinite(cap):
+                    region = (np.abs(X_grid - curr_x) <= Dx) & (np.abs(Y_grid - curr_y) <= Dy)
+                    mass_in_region = np.sum(M_k[region]) * Dx * Dy
+                    cumulative_mass[g] += mass_in_region * self.Dt
+
+                # If capacity ceiling is reached, freeze goal at current location
+                if cumulative_mass[g] >= cap:
+                    new_trajectories[k + 1, g] = [curr_x, curr_y]
+                    continue
+
                 if g_info['type'] == 'stationary':
-                    # Copy initial position (no motion)
                     new_trajectories[k + 1, g] = self.Y_trajectories[0, g]
 
                 elif g_info['type'] == 'prescribed':
-                    new_trajectories[k + 1, g] = self.Y_trajectories[k + 1, g]
+                    # Unsaturated prescribed goal follows analytical parametric path
+                    x_expr, y_expr = g_info['path_x'], g_info['path_y']
+                    t_next = (k + 1) * self.Dt
+                    px = eval_motion_expr(x_expr, t_next, self.T, Lx, self.Y_trajectories[0, g, 0])
+                    py = eval_motion_expr(y_expr, t_next, self.T, Ly, self.Y_trajectories[0, g, 1])
+                    new_trajectories[k + 1, g] = [px, py]
 
                 elif g_info['type'] == 'evader':
-                    curr_x, curr_y = new_trajectories[k, g]
                     v_max = g_info['v_max']
 
-                    # Compute repulsive force field from swarm density
                     if total_mass > 1e-6:
-                        # Vector from each grid cell to evader position
                         rx = curr_x - X_grid
                         ry = curr_y - Y_grid
-
-                        # Squared distance with regularization to prevent division by zero
-                        # Uses 1/r² repulsion law (Coulomb-like potential)
                         dist_sq = rx**2 + ry**2 + 1e-3
 
-                        # Integrate force contributions: F = Σ M(x) * (Y-x) / |Y-x|²
-                        # This is discrete approximation of ∫∫ M(x) (Y-x)/|Y-x|² dx dy
                         force_x = np.sum((rx / dist_sq) * M_k)
                         force_y = np.sum((ry / dist_sq) * M_k)
                         norm_force = np.sqrt(force_x**2 + force_y**2)
 
-                        # Normalize to maximum speed: v = v_max * F / |F|
                         if norm_force > 1e-8:
                             vx = (force_x / norm_force) * v_max
                             vy = (force_y / norm_force) * v_max
                         else:
-                            vx, vy = 0.0, 0.0  # No force → stationary
+                            vx, vy = 0.0, 0.0
                     else:
-                        vx, vy = 0.0, 0.0  # No swarm mass → stationary
+                        vx, vy = 0.0, 0.0
 
                     # Forward Euler integration: Y(t+Δt) = Y(t) + v·Δt
                     # Clip to domain boundaries [Dx, L-Dx] to stay within valid region

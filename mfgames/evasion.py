@@ -1,12 +1,15 @@
 """
-Goal management module supporting stationary goals, prescribed paths, and evasive goals.
+Goal management module supporting stationary goals, prescribed paths, evasive goals,
+and capacity-constrained landing platforms / exit goals.
 
-This module implements the target/goal dynamics for Mean Field Games simulations,
-supporting three types of goal behavior:
-1. Stationary: Fixed position targets (e.g., exit doors)
-2. Prescribed: Time-dependent parametric trajectories (e.g., moving obstacles)
+This module implements target/goal dynamics for Mean Field Games simulations,
+supporting four primary operational behaviors:
+1. Stationary: Fixed position targets (e.g., exit doors, static landing pads)
+2. Prescribed: Time-dependent parametric trajectories (e.g., moving obstacles/platforms)
 3. Evader: Dynamically reactive goals that move away from swarm density using
    repulsive force fields (implements evasion game dynamics)
+4. Capacity-Constrained: Exit goals or landing platforms with maximum mass ceilings
+   that saturate and deactivate after absorbing a specified cumulative density threshold.
 
 The evasive goal dynamics use a continuous repulsive potential field computed from
 the swarm density distribution M(x,y,t), enabling adversarial game scenarios where
@@ -57,12 +60,13 @@ def eval_motion_expr(expr_str, t, T_final, room_size, default_val):
 
 class Goal:
     """
-    Manages system goals (stationary positions, prescribed trajectories, or evasive goals).
+    Manages system goals (stationary positions, prescribed trajectories, evasive goals,
+    and capacity-constrained exit goals / mobile landing platforms).
 
     This class handles all goal dynamics in the Mean Field Games framework, supporting
-    three operational modes:
+    four operational modes:
 
-    1. **Stationary goals**: Fixed spatial targets (e.g., exit doors, destinations)
+    1. **Stationary goals**: Fixed spatial targets (e.g., exit doors, static pads)
        - Position remains constant: Y(t) = Y₀ for all t
        - Defines Dirichlet boundary conditions for value function u
 
@@ -75,8 +79,10 @@ class Goal:
        - Implements evasion game: dY/dt = v_max * ∇Φ(Y, M) where Φ is repulsive potential
        - Maximum speed constraint v_max enforces bounded evasion capability
 
-    The class precomputes trajectories for stationary/prescribed goals during initialization,
-    then updates evader trajectories iteratively during simulation via update_positions().
+    4. **Capacity-Constrained goals**: Mobile or static landing pads with maximum mass ceilings
+       - Stores finite capacity limit C_max (cumulative density units allowed)
+       - Automatically saturates once total absorbed mass reaches C_max
+       - Deactivates exit Dirichlet conditions or attenuates HJB attraction cost
 
     Attributes:
         Nt (int): Number of time steps in simulation
@@ -89,7 +95,10 @@ class Goal:
             - 'position': [x, y] initial position
             - 'v_max': Maximum speed for evaders (m/s)
             - 'path_x', 'path_y': Expression strings for prescribed paths
+            - 'capacity': Maximum cumulative mass ceiling (float, default inf)
+            - 'is_exit': Whether goal acts as mass-absorbing exit (bool)
         num_goals (int): Total number of goals
+        capacities (list[float]): Array of capacity limits per goal
         Y_trajectories (ndarray): Shape (Nt+1, num_goals, 2) position history [x, y]
     """
 
@@ -106,6 +115,8 @@ class Goal:
                     - 'v_max': Maximum evasion speed in m/s (default 15.0, evaders only)
                     - 'path_x': Expression for prescribed x(t) (prescribed goals only)
                     - 'path_y': Expression for prescribed y(t) (prescribed goals only)
+                    - 'capacity': Maximum cumulative density threshold (default inf)
+                    - 'is_exit': Whether goal absorbs mass via Dirichlet BC (default False)
             Nt (int): Number of temporal discretization steps
             Dt (float): Time step size in seconds
             T (float): Total simulation time in seconds (default 3.0)
@@ -121,10 +132,15 @@ class Goal:
         self.Lx, self.Ly = Lx, Ly
         self.goals = []
 
-        # Parse and normalize goal configurations into standardized dict format
         for cfg in goal_configs:
             if isinstance(cfg, (list, tuple)):
-                cfg_dict = {'type': 'evader', 'position': [float(cfg[0]), float(cfg[1])], 'v_max': 15.0}
+                cfg_dict = {
+                    'type': 'evader',
+                    'position': [float(cfg[0]), float(cfg[1])],
+                    'v_max': 15.0,
+                    'capacity': float('inf'),
+                    'is_exit': False
+                }
             elif isinstance(cfg, dict):
                 pos = cfg.get('position', [0.0, 0.0])
                 cfg_dict = {
@@ -132,7 +148,9 @@ class Goal:
                     'position': [float(pos[0]), float(pos[1])],
                     'v_max': float(cfg.get('v_max', 15.0)),
                     'path_x': cfg.get('path_x', None),
-                    'path_y': cfg.get('path_y', None)
+                    'path_y': cfg.get('path_y', None),
+                    'capacity': float(cfg.get('capacity', float('inf'))),
+                    'is_exit': bool(cfg.get('is_exit', False))
                 }
             else:
                 raise ValueError(f"Invalid goal configuration format: {cfg}")
@@ -140,6 +158,7 @@ class Goal:
             self.goals.append(cfg_dict)
 
         self.num_goals = len(self.goals)
+        self.capacities = [g['capacity'] for g in self.goals]
         self.Y_trajectories = np.zeros((Nt + 1, self.num_goals, 2))
 
         # Precompute trajectories for deterministic goal types (stationary and prescribed)
@@ -178,12 +197,22 @@ class Goal:
 
         Returns:
             bool: True if any goal is type 'evader' or 'prescribed', False if all stationary
-
+        
         Notes:
             - Stationary goals → can solve HJB-KFP system once with fixed boundary conditions
             - Dynamic goals → require outer loop updating goal positions Y(t) and re-solving
         """
         return any(g['type'] in ('evader', 'prescribed') for g in self.goals)
+
+    @property
+    def has_capacity_limits(self) -> bool:
+        """
+        Check if any goals have finite capacity limits requiring mass accumulation tracking.
+
+        Returns:
+            bool: True if any goal has a finite capacity threshold, False if all infinite
+        """
+        return any(np.isfinite(c) for c in self.capacities)
 
     def update_positions(self, M_field, omask, Dx, Dy, Lx, Ly):
         """
@@ -196,15 +225,15 @@ class Goal:
             F(Y) = ∫∫ (Y - x) / |Y - x|² M(x,y) dx dy   (repulsive force field)
             v(Y) = v_max * F(Y) / |F(Y)|                (normalized to max speed)
             Y(t+Δt) = Y(t) + v(Y) Δt                    (forward Euler integration)
-
+        
         This implements a greedy evasion strategy where goals move directly away from
         the center of mass of nearby swarm density with bounded maximum speed.
 
         Args:
             M_field (ndarray): Swarm density field, shape (Nt+1, Nx, Ny)
-                              Mass distribution M(x,y,t) from KFP solution
+                               Mass distribution M(x,y,t) from KFP solution
             omask (ndarray): Obstacle mask, shape (Nx, Ny)
-                            1 = walkable, 0 = obstacle (blocks evader motion)
+                             1 = walkable, 0 = obstacle (blocks evader motion)
             Dx (float): Spatial step size in x direction (meters)
             Dy (float): Spatial step size in y direction (meters)
             Lx (float): Domain width (meters)
@@ -212,14 +241,13 @@ class Goal:
 
         Returns:
             ndarray: Updated trajectory array, shape (Nt+1, num_goals, 2)
-                    New positions Y(t) for all goals and all time steps
-
+        
         Notes:
             - Stationary goals: Position copied from initial state
             - Prescribed goals: Position copied from precomputed trajectory
             - Evader goals: Position updated via repulsive force field integration
             - Collision detection: Goals cannot move into obstacle cells (omask == 0)
-            - Regularization: Distance denominator includes +1e-3 to prevent singularities
+            - Regularization: Distance denominator includes +1e-3 to prevent singularities        
         """
         Nx, Ny = omask.shape
         new_trajectories = np.copy(self.Y_trajectories)
@@ -232,8 +260,8 @@ class Goal:
 
         # Time-step loop: update all goals from time k to k+1
         for k in range(self.Nt):
-            M_k = M_field[k]  # Swarm density at current time step
-            total_mass = np.sum(M_k)  # Total mass for zero-density check
+            M_k = M_field[k] # Swarm density at current time step
+            total_mass = np.sum(M_k) # Total mass for zero-density check
 
             for g, g_info in enumerate(self.goals):
                 if g_info['type'] == 'stationary':
@@ -241,7 +269,6 @@ class Goal:
                     new_trajectories[k + 1, g] = self.Y_trajectories[0, g]
 
                 elif g_info['type'] == 'prescribed':
-                    # Copy precomputed trajectory position
                     new_trajectories[k + 1, g] = self.Y_trajectories[k + 1, g]
 
                 elif g_info['type'] == 'evader':
@@ -292,6 +319,5 @@ class Goal:
         return new_trajectories
 
 
-# Backward compatibility aliases
 TargetSwarm = Goal
 EvaderSwarm = Goal

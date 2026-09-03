@@ -19,6 +19,16 @@ MFGSolver consolidates time-stepping loops for both static exit doors
 and dynamic target goals into a unified execution path. The Picard iteration alternates
 between solving HJB given density m, then solving KFP given value u, with under-relaxation
 (thetaUM parameter) to stabilize convergence.
+
+Goal Capacity Saturation
+------------------------
+For mobile landing platforms or capacity-limited exits, the cumulative density absorbed
+by each goal region is integrated forward in space and time:
+    C_g(t) = ∫₀ᵗ ∫_{\Omega_g(s)} m(s, x) dx ds
+
+When C_g(t) reaches capacity threshold C_max, the exit region deactivates (door_mask = 0),
+switching boundary conditions from Dirichlet mass absorption (u=0, m=0) to interior transport.
+Optionally, for soft potential goals, attraction cost weights decay proportionally as capacity fills.
 """
 import time
 import numpy as np
@@ -37,15 +47,11 @@ from mfgames.numerics import (
 
 class MFGSolver:
     """
-    Mean Field Game solver for single-population systems with goal-seeking behavior[cite: 9].
+    Mean Field Game solver for single-population systems with goal-seeking behavior.
 
-    This solver handles drone swarms navigating toward static or dynamic goals in a 2D
-    spatial domain with obstacles[cite: 9]. It handles static exit locations, moving doors,
-    and reactive target goals (where goals flee from pursuer density)[cite: 9].
-
-    The solver uses Picard iteration to solve the coupled HJB-KFP system[cite: 9]. The value
-    function u represents cost-to-go to the nearest goal, while the density m represents
-    the spatial distribution of the swarm over time[cite: 9].
+    This solver handles drone swarms navigating toward static, dynamic, or capacity-constrained
+    goals in a 2D spatial domain with obstacles. It handles static exit locations,
+    moving doors, reactive target goals, and finite-capacity landing platforms.
 
     Attributes:
         pde_mesh (PDEMeshData): Spatial mesh containing geometry, obstacles, and initial conditions
@@ -65,8 +71,9 @@ class MFGSolver:
         m0 (ndarray): Initial density distribution (Nx, Ny)
         M (ndarray): Density trajectory (Nt+1, Nx, Ny) - solution to KFP equation
         U (ndarray): Value function trajectory (Nt+1, Nx, Ny) - solution to HJB equation
-        goal (Goal|None): Goal/target object managing dynamic goal trajectories
-        door_mask_3d (ndarray): Time-dependent exit/goal mask (Nt+1, Nx, Ny)
+        goal (Goal|None): Goal/target object managing dynamic goal trajectories and capacities
+        door_mask (ndarray): Consolidated time-dependent exit/goal mask (Nt+1, Nx, Ny)
+        door_mask_3d (ndarray): Property alias for backward compatibility with MFGPlotter
     """
 
     def __init__(
@@ -75,14 +82,15 @@ class MFGSolver:
         T: float = 3.0,
         Nt: int = 100,
         thetaUM: float = 0.1,
-        door_mask_3d=None,
+        door_mask=None,
+        door_mask_3d=None,  # Fallback keyword argument for backward compatibility
         goal_configs: list | None = None,
         goals_are_exits: bool = False,
         obstacle_penalty: float | None = None,
         running_cost_weight: float = 0.01,
     ):
         """
-        Initialize the Mean Field Game solver[cite: 9].
+        Initialize the Mean Field Game solver.
 
         Args:
             pde_mesh_data (PDEMeshData): Mesh object containing spatial grid, obstacles,
@@ -112,8 +120,8 @@ class MFGSolver:
         self.goals_are_exits = goals_are_exits
         self.running_cost_weight = running_cost_weight
 
-        # Dynamically scale obstacle penalty relative to max potential drop on grid if not provided[cite: 9].
-        # This ensures obstacles remain strongly repulsive regardless of domain size[cite: 9].
+        # Dynamically scale obstacle penalty relative to max potential drop on grid if not provided.
+        # This ensures obstacles remain strongly repulsive regardless of domain size.
         if obstacle_penalty is not None:
             self.obstacle_penalty = obstacle_penalty
         else:
@@ -124,12 +132,14 @@ class MFGSolver:
         self.omask = pde_mesh_data.get_pde_obstacle_mask()
         self.m0 = pde_mesh_data.build_initial_density()
 
-        # Allocate solution arrays: M for density, U for value function[cite: 9]
+        # Allocate solution arrays: M for density, U for value function
         self.M = np.zeros((self.Nt + 1, self.Nx, self.Ny))
         self.U = np.zeros((self.Nt + 1, self.Nx, self.Ny))
         self.M[0] = self.m0
 
-        # Automatic Goal detection from mesh data or explicit config[cite: 9]
+        initial_door_mask = door_mask if door_mask is not None else door_mask_3d
+
+        # Automatic Goal detection from mesh data or explicit config
         raw_goals = goal_configs if goal_configs is not None else pde_mesh_data.get_goals()
         if raw_goals:
             self.goal = Goal(
@@ -140,32 +150,21 @@ class MFGSolver:
                 Lx=self.Lx,
                 Ly=self.Ly,
             )
-            # Alias for backward compatibility with MFGPlotter[cite: 9]
+            # Alias for backward compatibility with MFGPlotter
             self.evader_swarm = self.goal
-            self.door_mask_3d = self._build_dynamic_goal_doors(self.goal.Y_trajectories)
+            self.door_mask = self._build_dynamic_goal_doors(self.goal.Y_trajectories)
         else:
             self.goal = None
             self.evader_swarm = None
-            if door_mask_3d is not None:
-                self.door_mask_3d = door_mask_3d
+            if initial_door_mask is not None:
+                self.door_mask = initial_door_mask
             else:
-                self.door_mask_3d = np.zeros((Nt + 1, self.Nx, self.Ny))
+                self.door_mask = np.zeros((Nt + 1, self.Nx, self.Ny))
+
+        self.door_mask_3d = self.door_mask
 
     def _build_dynamic_goal_doors(self, goal_trajectories):
-        """
-        Construct time-dependent exit mask around moving goals where is_exit is True.
-
-        For each goal marked with is_exit=True, this creates a small spatial region
-        (±Dx, ±Dy) around the goal's position at each timestep where boundary condition
-        u=0 is applied (absorbing boundary)[cite: 9].
-
-        Args:
-            goal_trajectories (ndarray): Goal positions of shape (Nt+1, num_goals, 2)
-                where last dimension is (x, y) coordinates[cite: 9]
-
-        Returns:
-            ndarray: Door mask of shape (Nt+1, Nx, Ny) with 1.0 at exit cells, 0.0 elsewhere
-        """
+        """Construct time-dependent exit mask for active exit goals."""
         door_mask = np.zeros((self.Nt + 1, self.Nx, self.Ny))
         if not self.goal or goal_trajectories is None:
             return door_mask
@@ -173,40 +172,98 @@ class MFGSolver:
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
         for k in range(self.Nt + 1):
             for g_idx, g_info in enumerate(self.goal.goals):
-                if g_info.get('is_exit', False):
+                is_exit = g_info.get('is_exit', self.goals_are_exits)
+                if is_exit:
                     gx, gy = goal_trajectories[k, g_idx]
                     region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
                     door_mask[k][region] = 1.0
         return door_mask
 
-    def compute_running_cost(self, goal_positions_k):
+    def compute_saturated_door_mask(self, M_field, goal_trajectories):
         """
-        Compute distance-based running cost to nearest goal at timestep k.
+        Constructs time-dependent exit mask considering goal capacity limits.
+
+        Integrates agent density entering each goal region over time. When cumulative
+        absorbed mass reaches a goal's capacity ceiling C_max, the exit boundary is closed
+        (door_mask = 0) for all subsequent timesteps.
+
+        Args:
+            M_field (ndarray): Density distribution trajectory, shape (Nt+1, Nx, Ny)
+            goal_trajectories (ndarray): Goal positions, shape (Nt+1, num_goals, 2)
+
+        Returns:
+            ndarray: Updated door mask of shape (Nt+1, Nx, Ny)
+        """
+        door_mask = np.zeros((self.Nt + 1, self.Nx, self.Ny))
+        if not self.goal or goal_trajectories is None:
+            return door_mask
+
+        X, Y = self.pde_mesh.X, self.pde_mesh.Y
+        cumulative_mass = np.zeros(self.goal.num_goals)
+
+        for k in range(self.Nt + 1):
+            for g_idx, g_info in enumerate(self.goal.goals):
+                is_exit = g_info.get('is_exit', self.goals_are_exits)
+                if not is_exit:
+                    continue
+
+                cap = g_info.get('capacity', float('inf'))
+                gx, gy = goal_trajectories[k, g_idx]
+                region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
+
+                if cumulative_mass[g_idx] < cap:
+                    door_mask[k][region] = 1.0
+
+                if k < self.Nt:
+                    mass_in_region = np.sum(M_field[k][region]) * self.Dx * self.Dy
+                    cumulative_mass[g_idx] += mass_in_region * self.Dt
+
+        return door_mask
+
+    def compute_running_cost(self, goal_positions_k, k=None, M_trajectory=None):
+        """
+        Compute distance-based running cost to nearest goal at timestep k, accounting for capacity.
 
         The running cost penalizes distance from goals, incentivizing the swarm to
-        move toward the nearest target. Uses squared Euclidean distance weighted by
-        running_cost_weight parameter.
+        move toward targets. If finite capacity constraints exist, attraction weight
+        decays proportionally as cumulative absorbed density fills the landing platform.
 
         Args:
             goal_positions_k (ndarray): Goal positions at time k, shape (num_goals, 2)
-                where each row is (x, y) coordinates
+            k (int|None): Current timestep index for capacity tracking
+            M_trajectory (ndarray|None): Full density trajectory for capacity integration
 
         Returns:
-            ndarray: Running cost field of shape (Nx, Ny) representing weighted squared
-                distance to nearest goal at each grid point
+            ndarray: Running cost field of shape (Nx, Ny)
         """
-        if goal_positions_k is None:
+        if goal_positions_k is None or len(goal_positions_k) == 0:
             return np.zeros((self.Nx, self.Ny))
 
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
         min_dist_sq = np.full((self.Nx, self.Ny), 1e6)
-        # Compute distance to each goal and keep minimum[cite: 9]
-        for gx, gy in goal_positions_k:
-            dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
+
+        capacity_weights = np.ones(len(goal_positions_k))
+        if k is not None and M_trajectory is not None and self.goal is not None and self.goal.has_capacity_limits:
+            for g_idx, g_info in enumerate(self.goal.goals):
+                cap = g_info.get('capacity', float('inf'))
+                if np.isfinite(cap):
+                    cum_mass = 0.0
+                    for t_idx in range(k + 1):
+                        gx, gy = self.goal.Y_trajectories[t_idx, g_idx]
+                        region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
+                        cum_mass += np.sum(M_trajectory[t_idx][region]) * self.Dx * self.Dy * self.Dt
+
+                    capacity_weights[g_idx] = max(0.0, 1.0 - cum_mass / cap)
+
+        # Compute distance to each goal and keep minimum
+        for g_idx, (gx, gy) in enumerate(goal_positions_k):
+            weight = capacity_weights[g_idx]
+            dist_sq = weight * ((X - gx) ** 2 + (Y - gy) ** 2)
             min_dist_sq = np.minimum(min_dist_sq, dist_sq)
+
         return self.running_cost_weight * min_dist_sq
 
-    def solve_forward_FP_step(self, U_trajectory, door_mask_3d):
+    def solve_forward_FP_step(self, U_trajectory, door_mask):
         """
         Solve the Fokker-Planck (KFP) equation forward in time.
 
@@ -220,7 +277,7 @@ class MFGSolver:
 
         Args:
             U_trajectory (ndarray): Value function trajectory, shape (Nt+1, Nx, Ny)
-            door_mask_3d (ndarray): Time-dependent exit mask, shape (Nt+1, Nx, Ny)
+            door_mask (ndarray): Time-dependent exit mask, shape (Nt+1, Nx, Ny)
 
         Returns:
             ndarray: Evolved density m of shape (Nt+1, Nx, Ny)
@@ -229,10 +286,10 @@ class MFGSolver:
         m[0] = self.m0
         N_total = self.Nx * self.Ny
 
-        # Time-stepping loop: implicit solve at each timestep[cite: 9]
+        # Time-stepping loop: implicit solve at each timestep
         for k in range(1, self.Nt + 1):
             rows, cols, vals, b = compute_FP_matrix_entries(
-                m[k - 1], U_trajectory[k - 1], self.omask, door_mask_3d[k - 1],
+                m[k - 1], U_trajectory[k - 1], self.omask, door_mask[k - 1],
                 self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
             )
             A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()
@@ -240,37 +297,40 @@ class MFGSolver:
             m[k] = mtmp.reshape((self.Nx, self.Ny))
         return m
 
-    def solve_backward_HJB_step(self, M_trajectory, goal_trajectories, door_mask_3d):
+    def solve_backward_HJB_step(self, M_trajectory, goal_trajectories, door_mask):
         """
-        Solve the Hamilton-Jacobi-Bellman (HJB) equation backward in time[cite: 9].
+        Solve the Hamilton-Jacobi-Bellman (HJB) equation backward in time.
 
         The HJB equation computes optimal value function u, which represents cost-to-go
-        from any position to goals[cite: 9]. The equation is nonlinear due to the Hamiltonian,
-        requiring Newton iteration at each timestep[cite: 9]. Uses implicit Euler discretization[cite: 9].
-
+        from any position to goals. The equation is nonlinear due to the Hamiltonian,
+        requiring Newton iteration at each timestep. Uses implicit Euler discretization.
+        
         Mathematical formulation:
             $$-\\frac{\\partial u}{\\partial t} + H(x, m, \\nabla u) - \\nu \\Delta u = 0$$
-
         Args:
-            M_trajectory (ndarray): Density trajectory, shape (Nt+1, Nx, Ny)[cite: 9]
-            goal_trajectories (ndarray|None): Goal positions, shape (Nt+1, num_goals, 2) or None[cite: 9]
-            door_mask_3d (ndarray): Time-dependent exit mask, shape (Nt+1, Nx, Ny)[cite: 9]
+            M_trajectory (ndarray): Density trajectory, shape (Nt+1, Nx, Ny)
+            goal_trajectories (ndarray|None): Goal positions, shape (Nt+1, num_goals, 2) or None
+            door_mask (ndarray): Time-dependent exit mask, shape (Nt+1, Nx, Ny)
 
         Returns:
-            ndarray: Value function u of shape (Nt+1, Nx, Ny)[cite: 9]
+            ndarray: Value function u of shape (Nt+1, Nx, Ny)
         """
         u = np.zeros_like(self.U)
 
         # Terminal condition at t = T
         if goal_trajectories is not None:
-            running_cost_Nt = self.compute_running_cost(goal_trajectories[self.Nt])
+            running_cost_Nt = self.compute_running_cost(goal_trajectories[self.Nt], k=self.Nt, M_trajectory=M_trajectory)
             u[self.Nt] = -running_cost_Nt
         else:
             u[self.Nt] = np.zeros((self.Nx, self.Ny))
 
         # Backward time-stepping loop
         for k in range(self.Nt - 1, -1, -1):
-            running_cost_k = self.compute_running_cost(goal_trajectories[k]) if goal_trajectories is not None else np.zeros((self.Nx, self.Ny))
+            running_cost_k = (
+                self.compute_running_cost(goal_trajectories[k], k=k, M_trajectory=M_trajectory)
+                if goal_trajectories is not None
+                else np.zeros((self.Nx, self.Ny))
+            )
             Unew_n = np.copy(u[k + 1])
             N_total = self.Nx * self.Ny
 
@@ -278,14 +338,14 @@ class MFGSolver:
             for _ in range(30):
                 # Compute nonlinear residual F(U^n)
                 FnU_flat = getFnU_2D(
-                    u[k + 1], Unew_n, M_trajectory[k + 1], self.omask, door_mask_3d[k],
+                    u[k + 1], Unew_n, M_trajectory[k + 1], self.omask, door_mask[k],
                     running_cost_k, self.Nx, self.Ny, self.Dx, self.Dy, self.Dt,
                     obstacle_penalty=self.obstacle_penalty
                 ).flatten()
 
                 # Compute Jacobian matrix A = ∂F/∂U
                 rows, cols, vals = compute_HJB_matrix_entries(
-                    Unew_n, M_trajectory[k + 1], self.omask, door_mask_3d[k],
+                    Unew_n, M_trajectory[k + 1], self.omask, door_mask[k],
                     self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
                 )
                 A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()
@@ -295,7 +355,7 @@ class MFGSolver:
                 for i in range(self.Nx):
                     for j in range(self.Ny):
                         ind = i * self.Ny + j
-                        if door_mask_3d[k, i, j] == 1:
+                        if door_mask[k, i, j] == 1:
                             b[ind] = 0.0
                         elif self.omask[i, j] == 0:
                             b[ind] = self.obstacle_penalty
@@ -311,7 +371,7 @@ class MFGSolver:
 
     def run_picard_system(self, max_iters: int = 10, tolerance: float = 1e-5):
         """
-        Execute Picard iteration to solve the coupled HJB-KFP system.
+        Execute Picard iteration to solve the coupled HJB-KFP system with capacity limits.
 
         Picard iteration alternates between solving HJB (given density M) and solving
         KFP (given value U), with under-relaxation to stabilize convergence. For dynamic
@@ -341,17 +401,20 @@ class MFGSolver:
             print(f"\n>>> Macro Picard Loop Execution: {iiter} / {max_iters}", flush=True)
 
             goal_trajectories = self.goal.Y_trajectories if self.goal is not None else None
-            door_mask = self.door_mask_3d
+
+            if self.goal is not None and self.goal.has_capacity_limits:
+                self.door_mask = self.compute_saturated_door_mask(self.M, goal_trajectories)
+                self.door_mask_3d = self.door_mask
 
             # Step 1: Solve HJB backward in time
-            U_temp = self.solve_backward_HJB_step(self.M, goal_trajectories, door_mask)
+            U_temp = self.solve_backward_HJB_step(self.M, goal_trajectories, self.door_mask)
             U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
 
             # Step 2: Solve FP forward in time
-            M_temp = self.solve_forward_FP_step(U_new, door_mask)
+            M_temp = self.solve_forward_FP_step(U_new, self.door_mask)
             M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
 
-            # Step 3: Update dynamic goals (if present)
+            # Step 3: Update dynamic goals
             if self.goal is not None:
                 Y_temp = self.goal.update_positions(M_new, self.omask, self.Dx, self.Dy, self.Lx, self.Ly)
                 Y_new = self.thetaUM * Y_temp + (1.0 - self.thetaUM) * self.goal.Y_trajectories
@@ -364,7 +427,11 @@ class MFGSolver:
             u_err = np.linalg.norm(U_new - self.U) * space_time_factor
             m_err = np.linalg.norm(M_new - self.M) * space_time_factor
 
-            print(f"    u_residual: {u_err:.6e} | m_residual: {m_err:.6e} | y_goal_residual: {y_err:.6e} | Time: {time.time() - start_time:.2f}s", flush=True)
+            print(
+                f"    u_residual: {u_err:.6e} | m_residual: {m_err:.6e} | "
+                f"y_goal_residual: {y_err:.6e} | Time: {time.time() - start_time:.2f}s",
+                flush=True
+            )
 
             self.U = np.copy(U_new)
             self.M = np.copy(M_new)
@@ -460,7 +527,7 @@ class MFG2PopSolver:
         m = np.zeros((self.Nt + 1, self.Nx, self.Ny))
         m[0] = m0
         N_total = self.Nx * self.Ny
-    
+
         for k in range(1, self.Nt + 1):
             rows, cols, vals, b = compute_FP_matrix_entries_2Pop(
                 m[k - 1], M_other_trajectory[k - 1], U_trajectory[k - 1],
@@ -590,7 +657,7 @@ class MFG2PopSolver:
             # Solve KFP for both populations with updated value functions
             M1_temp = self.solve_forward_FP(U1_new, self.m0_1, self.M2)
             M2_temp = self.solve_forward_FP(U2_new, self.m0_2, self.M1)
-            
+
             # Apply under-relaxation to densities
             M1_new = self.thetaUM * M1_temp + (1.0 - self.thetaUM) * self.M1
             M2_new = self.thetaUM * M2_temp + (1.0 - self.thetaUM) * self.M2

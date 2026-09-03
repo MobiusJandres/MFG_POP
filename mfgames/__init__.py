@@ -155,7 +155,7 @@ See Also
 """
 
 from .geometry import MAP2PDE, create_moving_door_mask
-from .evasion import EvaderSwarm
+from .evasion import EvaderSwarm, Goal
 from .solvers import solveFP_2D, solveHJB_withM
 from .plotting import MFGPlotter
 from .problem import MFGSolver
@@ -164,6 +164,7 @@ __all__ = [
     "MAP2PDE",
     "create_moving_door_mask",
     "EvaderSwarm",
+    "Goal",
     "solveFP_2D",
     "solveHJB_withM",
     "MFGPlotter",

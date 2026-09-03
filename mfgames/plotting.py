@@ -174,15 +174,15 @@ class MFGPlotter:
         Ly (float): Physical domain height in meters.
         Dt (float): Time step size in seconds.
         Nt (int): Number of time steps in simulation.
-        M1 (np.ndarray): Population 1 density array, shape (Nt+1, Nx, Ny) or (Nx, Ny, Nt+1).
-        M2 (np.ndarray or None): Population 2 density array (None for single-population).
+        M1 (np.ndarray): Population 1 density array.
+        M2 (np.ndarray or None): Population 2 density array.
         U1 (np.ndarray): Population 1 value function array.
         U2 (np.ndarray or None): Population 2 value function array.
-        evader_trajectories (np.ndarray or None): Evader positions for pursuit-evasion,
-            shape (Nt+1, num_evaders, 2).
-        door_mask_3d (np.ndarray or None): Time-dependent door masks, shape (Nt+1, Nx, Ny).
-        wall_mask (np.ndarray): Boolean array marking obstacle locations, shape (Nx, Ny).
-        extent (list): Matplotlib extent [x_min, x_max, y_min, y_max] for imshow.
+        evader_trajectories (np.ndarray or None): Evader positions for pursuit-evasion.
+        door_mask (np.ndarray or None): Time-dependent door masks, shape (Nt+1, Nx, Ny).
+        door_mask_3d (np.ndarray or None): Alias for door_mask for backward compatibility.
+        wall_mask (np.ndarray): Boolean array marking obstacle locations.
+        extent (list): Matplotlib extent [x_min, x_max, y_min, y_max].
         goals_1 (list): List of (x, y) goal positions for population 1.
         goals_2 (list): List of (x, y) goal positions for population 2.
     """
@@ -216,7 +216,8 @@ class MFGPlotter:
         self.U2 = getattr(solver_instance, 'U2', None)
 
         self.evader_trajectories = getattr(getattr(solver_instance, 'evader_swarm', None), 'Y_trajectories', None)
-        self.door_mask_3d = getattr(solver_instance, 'door_mask_3d', None)
+        self.door_mask = getattr(solver_instance, 'door_mask', getattr(solver_instance, 'door_mask_3d', None))
+        self.door_mask_3d = self.door_mask
         self.wall_mask = (solver_instance.omask == 0)
         self.extent = [0, self.Lx, 0, self.Ly]
 
@@ -287,10 +288,10 @@ class MFGPlotter:
             if self.goals_2:
                 gxs, gys = zip(*self.goals_2)
                 ax.scatter(gxs, gys, color='#2288ff', marker='X', s=70, edgecolor='white', linewidth=1.2, label='Pop 2 Goals', zorder=10)
-            if self.door_mask_3d is not None and np.sum(self.door_mask_3d[t_idx]) > 0:
+            if self.door_mask is not None and np.sum(self.door_mask[t_idx]) > 0:
                 xs = np.linspace(0, self.Lx, self.M1.shape[1])
                 ys = np.linspace(0, self.Ly, self.M1.shape[2])
-                ax.contour(xs, ys, self.door_mask_3d[t_idx].T, levels=[0.5], colors="lime", linewidths=2)
+                ax.contour(xs, ys, self.door_mask[t_idx].T, levels=[0.5], colors="lime", linewidths=2)
 
     def _build_combined_rgb(self, m1_frame, m2_frame, m1_max, m2_max):
         """
@@ -329,14 +330,14 @@ class MFGPlotter:
         rgb = np.ones((Ny, Nx, 3)) * 0.95
 
         # Subtractive blending: Pop 1 reduces green/blue (→ red), Pop 2 reduces red/green (→ blue)
-        rgb[:, :, 1] -= alpha1 * 0.95  # Pop 1: subtract green
-        rgb[:, :, 2] -= alpha1 * 0.95  # Pop 1: subtract blue
-        rgb[:, :, 0] -= alpha2 * 0.95  # Pop 2: subtract red
-        rgb[:, :, 1] -= alpha2 * 0.95  # Pop 2: subtract green
+        rgb[:, :, 1] -= alpha1 * 0.95
+        rgb[:, :, 2] -= alpha1 * 0.95
+        rgb[:, :, 0] -= alpha2 * 0.95
+        rgb[:, :, 1] -= alpha2 * 0.95
 
         # Clamp to valid RGB range and apply wall mask
         rgb = np.clip(rgb, 0.0, 1.0)
-        rgb[self.wall_mask.T] = [0.1725, 0.2431, 0.3137]  # Dark slate gray for obstacles
+        rgb[self.wall_mask.T] = [0.1725, 0.2431, 0.3137]
         return rgb
 
     def plot_snapshots(self, output_file="Output/dashboard_snapshots.png"):

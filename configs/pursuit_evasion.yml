@@ -30,11 +30,12 @@ goals:
 
   - type: "evader"
     position: [100.0, 700.0]
-    v_max: 25.0
+    v_max: 15.0
+    capacity: 15.0
 
   - type: "evader"
     position: [700.0, 700.0]
-    v_max: 25.0
+    v_max: 20.0
 
   - type: "evader"
     position: [384.0, 100.0]
@@ -48,4 +49,4 @@ relaxation_theta: 0.1
 
 # Pursuit-Evasion Dynamics
 v_max_evader: 25.0
-enable_evader_swarm: true
+# enable_evader_swarm: true

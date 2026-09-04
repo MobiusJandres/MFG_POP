@@ -275,11 +275,11 @@ class Goal:
                 if np.isfinite(cap):
                     region = (np.abs(X_grid - curr_x) <= Dx) & (np.abs(Y_grid - curr_y) <= Dy)
                     mass_in_region = np.sum(M_k[region]) * Dx * Dy
-                    cumulative_mass[g] += mass_in_region * self.Dt
+                    cumulative_mass[g] += mass_in_region
 
-                # If capacity ceiling is reached, freeze goal at current location
+                # If capacity ceiling is reached, freeze goal permanently at current location
                 if cumulative_mass[g] >= cap:
-                    new_trajectories[k + 1, g] = [curr_x, curr_y]
+                    new_trajectories[k + 1:, g] = [curr_x, curr_y]
                     continue
 
                 if g_info['type'] == 'stationary':

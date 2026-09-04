@@ -228,7 +228,7 @@ class MFGPlotter:
 
         # Spatial masks
         self.door_mask = getattr(solver_instance, 'door_mask', getattr(solver_instance, 'door_mask_3d', None))
-        self.door_mask_3d = self.door_mask  # Alias for backward compatibility
+        self.door_mask_3d = self.door_mask
         self.wall_mask = (solver_instance.omask == 0)
         self.extent = [0, self.Lx, 0, self.Ly]
 
@@ -289,33 +289,33 @@ class MFGPlotter:
         """
         if self.evader_trajectories is not None and self.goal_instance is not None:
             X, Y = self.X, self.Y
-            
+
             for g_idx, g_info in enumerate(self.goal_instance.goals):
                 pos = self.evader_trajectories[t_idx, g_idx]
                 cap = g_info.get('capacity', float('inf'))
-                
+
                 # Calculate cumulative mass absorbed by goal g up to frame t_idx
                 cum_mass = 0.0
-                if np.isfinite(cap) and self.M1 is not None:
+                if np.isfinite(cap) and self.M1 is not None and X is not None and Y is not None:
                     for k in range(t_idx + 1):
                         gx, gy = self.evader_trajectories[k, g_idx]
                         region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
-                        cum_mass += np.sum(self.M1[k][region]) * self.Dx * self.Dy * self.Dt
+                        cum_mass += np.sum(self.M1[k][region]) * self.Dx * self.Dy
 
                 # Set color: Red (#ff2222) if saturated, Cyan/Blue (#00f2fe) if active
                 is_saturated = cum_mass >= cap
                 marker_color = '#ff2222' if is_saturated else '#00f2fe'
-                
+
                 ax.scatter(
-                    pos[0], pos[1], 
-                    color=marker_color, 
-                    marker='X', 
-                    s=80, 
-                    edgecolor='black', 
-                    linewidth=0.8, 
+                    pos[0], pos[1],
+                    color=marker_color,
+                    marker='X',
+                    s=80,
+                    edgecolor='black',
+                    linewidth=0.8,
                     zorder=10
                 )
-                
+
             if self.door_mask is not None and np.sum(self.door_mask[t_idx]) > 0:
                 xs = np.linspace(0, self.Lx, self.M1.shape[1])
                 ys = np.linspace(0, self.Ly, self.M1.shape[2])

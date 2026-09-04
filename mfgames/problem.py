@@ -24,7 +24,7 @@ Goal Capacity Saturation
 ------------------------
 For mobile landing platforms or capacity-limited exits, the cumulative density absorbed
 by each goal region is integrated forward in space and time:
-    C_g(t) = ∫₀ᵗ ∫_{\Omega_g(s)} m(s, x) dx ds
+    C_g(t) = ∫₀ᵗ ∫_{\\Omega_g(s)} m(s, x) dx ds
 
 When C_g(t) reaches capacity threshold C_max, the exit region deactivates (door_mask = 0),
 switching boundary conditions from Dirichlet mass absorption (u=0, m=0) to interior transport.
@@ -216,7 +216,7 @@ class MFGSolver:
 
                 if k < self.Nt:
                     mass_in_region = np.sum(M_field[k][region]) * self.Dx * self.Dy
-                    cumulative_mass[g_idx] += mass_in_region * self.Dt
+                    cumulative_mass[g_idx] += mass_in_region
 
         return door_mask
 
@@ -225,8 +225,9 @@ class MFGSolver:
         Compute distance-based running cost to nearest goal at timestep k, accounting for capacity.
 
         The running cost penalizes distance from goals, incentivizing the swarm to
-        move toward targets. If finite capacity constraints exist, attraction weight
-        decays proportionally as cumulative absorbed density fills the landing platform.
+        move toward targets. If finite capacity constraints exist, effective distance is
+        scaled up as the goal fills (dist^2 / weight). Once fully saturated (weight = 0),
+        the goal is assigned an infinite distance penalty and excluded from attracting agents.
 
         Args:
             goal_positions_k (ndarray): Goal positions at time k, shape (num_goals, 2)
@@ -240,9 +241,8 @@ class MFGSolver:
             return np.zeros((self.Nx, self.Ny))
 
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
-        min_dist_sq = np.full((self.Nx, self.Ny), 1e6)
-
         capacity_weights = np.ones(len(goal_positions_k))
+
         if k is not None and M_trajectory is not None and self.goal is not None and self.goal.has_capacity_limits:
             for g_idx, g_info in enumerate(self.goal.goals):
                 cap = g_info.get('capacity', float('inf'))
@@ -251,15 +251,24 @@ class MFGSolver:
                     for t_idx in range(k + 1):
                         gx, gy = self.goal.Y_trajectories[t_idx, g_idx]
                         region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
-                        cum_mass += np.sum(M_trajectory[t_idx][region]) * self.Dx * self.Dy * self.Dt
+                        cum_mass += np.sum(M_trajectory[t_idx][region]) * self.Dx * self.Dy
 
                     capacity_weights[g_idx] = max(0.0, 1.0 - cum_mass / cap)
 
-        # Compute distance to each goal and keep minimum
+        # Filter active (unsaturated) goals
+        active_distances = []
         for g_idx, (gx, gy) in enumerate(goal_positions_k):
             weight = capacity_weights[g_idx]
-            dist_sq = weight * ((X - gx) ** 2 + (Y - gy) ** 2)
-            min_dist_sq = np.minimum(min_dist_sq, dist_sq)
+            if weight > 1e-5:
+                # Effective distance increases as goal fills up
+                eff_dist_sq = ((X - gx) ** 2 + (Y - gy) ** 2) / weight
+                active_distances.append(eff_dist_sq)
+
+        if active_distances:
+            min_dist_sq = np.minimum.reduce(active_distances)
+        else:
+            # All goals are saturated -> zero running cost gradient
+            min_dist_sq = np.zeros((self.Nx, self.Ny))
 
         return self.running_cost_weight * min_dist_sq
 

@@ -79,6 +79,27 @@ class Options:
                 if path_str is not None:
                     setattr(self.args, arg_key, Path(path_str).absolute())
 
+    def _save_config(self) -> None:
+        """
+        Saves the fully resolved experiment configuration dictionary to config.yml in save_dir.
+        Converts non-YAML-serializable types (such as Path objects) into strings.
+        """
+        config_out_path = self.args.save_dir / "config.yml"
+        
+        config_dict = {}
+        for key, val in vars(self.args).items():
+            if isinstance(val, Path):
+                config_dict[key] = str(val)
+            else:
+                config_dict[key] = val
+
+        try:
+            with open(config_out_path, 'w') as f:
+                yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+            print(f"Saved run configuration to '{config_out_path}'", flush=True)
+        except Exception as e:
+            logging.exception(f"Failed to save configuration file to {config_out_path}: {e}")
+
     def parseArgs(self) -> argparse.Namespace:
         """Parses CLI inputs, applies YAML settings, and generates the output save directory."""
         self.args = self.parser.parse_args()
@@ -97,6 +118,11 @@ class Options:
             self.args.save_dir = self.args.results_dir / run_identifier
         else:
             self.args.save_dir = Path.cwd() / "results" / run_identifier
+
+        self.args.save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save configuration snapshot into the timestamped results folder
+        self._save_config()
 
         self.args.save_dir.mkdir(parents=True, exist_ok=True)
         return self.args

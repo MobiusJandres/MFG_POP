@@ -52,8 +52,8 @@ def eval_motion_expr(expr_str, t, T_final, room_size, default_val):
         'sin': np.sin,
         'cos': np.cos,
         'pi': np.pi,
-        't': float(t),        # Current time
-        'T': float(T_final),  # Total simulation time
+        't': float(t),         # Current time
+        'T': float(T_final),   # Total simulation time
         'L': float(room_size), # Domain dimension for normalization
     }
     return float(eval(str(expr_str), {"__builtins__": None}, eval_env))
@@ -162,6 +162,7 @@ class Goal:
         self.num_goals = len(self.goals)
         self.capacities = [g['capacity'] for g in self.goals]
         self.Y_trajectories = np.zeros((Nt + 1, self.num_goals, 2))
+        self.saturation_steps = np.full(self.num_goals, Nt + 1, dtype=int)
 
         # Precompute trajectories for deterministic goal types (stationary and prescribed)
         # Evader trajectories are initialized but will be updated dynamically via update_positions()
@@ -261,11 +262,12 @@ class Goal:
         X_grid, Y_grid = np.meshgrid(x_coords, y_coords, indexing='ij')
 
         cumulative_mass = np.zeros(self.num_goals)
+        self.saturation_steps.fill(self.Nt + 1)
 
         # Time-step loop: update all goals from time k to k+1
         for k in range(self.Nt):
             M_k = M_field[k]  # Swarm density at current time step
-            total_mass = np.sum(M_k) # Total mass for zero-density check
+            total_mass = np.sum(M_k)  # Total mass for zero-density check
 
             for g, g_info in enumerate(self.goals):
                 cap = g_info.get('capacity', float('inf'))
@@ -278,9 +280,11 @@ class Goal:
                     cumulative_mass[g] += mass_in_region
 
                 # If capacity ceiling is reached, freeze goal permanently at current location
-                if cumulative_mass[g] >= cap:
-                    new_trajectories[k + 1:, g] = [curr_x, curr_y]
-                    continue
+                    if cumulative_mass[g] >= cap:
+                        if self.saturation_steps[g] > k:
+                            self.saturation_steps[g] = k
+                        new_trajectories[k + 1:, g] = [curr_x, curr_y]
+                        continue
 
                 if g_info['type'] == 'stationary':
                     new_trajectories[k + 1, g] = self.Y_trajectories[0, g]

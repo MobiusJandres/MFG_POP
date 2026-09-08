@@ -83,7 +83,7 @@ class MFGSolver:
         Nt: int = 100,
         thetaUM: float = 0.1,
         door_mask=None,
-        door_mask_3d=None,  # Fallback keyword argument for backward compatibility
+        door_mask_3d=None,   # Fallback keyword argument for backward compatibility
         goal_configs: list | None = None,
         goals_are_exits: bool = False,
         obstacle_penalty: float | None = None,
@@ -241,33 +241,30 @@ class MFGSolver:
             return np.zeros((self.Nx, self.Ny))
 
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
-        capacity_weights = np.ones(len(goal_positions_k))
+        active_distances = []
 
-        if k is not None and M_trajectory is not None and self.goal is not None and self.goal.has_capacity_limits:
-            for g_idx, g_info in enumerate(self.goal.goals):
-                cap = g_info.get('capacity', float('inf'))
+        for g_idx, (gx, gy) in enumerate(goal_positions_k):
+            is_active = True
+            if k is not None and M_trajectory is not None and self.goal is not None and self.goal.has_capacity_limits:
+                cap = self.goal.goals[g_idx].get('capacity', float('inf'))
                 if np.isfinite(cap):
                     cum_mass = 0.0
                     for t_idx in range(k + 1):
-                        gx, gy = self.goal.Y_trajectories[t_idx, g_idx]
-                        region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
+                        cur_gx, cur_gy = self.goal.Y_trajectories[t_idx, g_idx]
+                        region = (np.abs(X - cur_gx) <= self.Dx) & (np.abs(Y - cur_gy) <= self.Dy)
                         cum_mass += np.sum(M_trajectory[t_idx][region]) * self.Dx * self.Dy
 
-                    capacity_weights[g_idx] = max(0.0, 1.0 - cum_mass / cap)
+                    if cum_mass >= cap:
+                        is_active = False
 
-        # Filter active (unsaturated) goals
-        active_distances = []
-        for g_idx, (gx, gy) in enumerate(goal_positions_k):
-            weight = capacity_weights[g_idx]
-            if weight > 1e-5:
-                # Effective distance increases as goal fills up
-                eff_dist_sq = ((X - gx) ** 2 + (Y - gy) ** 2) / weight
-                active_distances.append(eff_dist_sq)
+            # Filter active (unsaturated) goals
+            if is_active:
+                dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
+                active_distances.append(dist_sq)
 
         if active_distances:
             min_dist_sq = np.minimum.reduce(active_distances)
         else:
-            # All goals are saturated -> zero running cost gradient
             min_dist_sq = np.zeros((self.Nx, self.Ny))
 
         return self.running_cost_weight * min_dist_sq
@@ -345,7 +342,6 @@ class MFGSolver:
 
             # Newton iteration for nonlinear Hamiltonian (max 30 iterations)
             for _ in range(30):
-                # Compute nonlinear residual F(U^n)
                 FnU_flat = getFnU_2D(
                     u[k + 1], Unew_n, M_trajectory[k + 1], self.omask, door_mask[k],
                     running_cost_k, self.Nx, self.Ny, self.Dx, self.Dy, self.Dt,
@@ -427,6 +423,13 @@ class MFGSolver:
             if self.goal is not None:
                 Y_temp = self.goal.update_positions(M_new, self.omask, self.Dx, self.Dy, self.Lx, self.Ly)
                 Y_new = self.thetaUM * Y_temp + (1.0 - self.thetaUM) * self.goal.Y_trajectories
+
+                # Hard-freeze post-saturation positions across Picard iterations
+                for g_idx in range(self.goal.num_goals):
+                    sat_k = self.goal.saturation_steps[g_idx]
+                    if sat_k <= self.Nt:
+                        Y_new[sat_k:, g_idx, :] = Y_temp[sat_k, g_idx, :]
+
                 y_err = np.linalg.norm(Y_new - self.goal.Y_trajectories)
                 self.goal.Y_trajectories = np.copy(Y_new)
             else:
@@ -445,7 +448,6 @@ class MFGSolver:
             self.U = np.copy(U_new)
             self.M = np.copy(M_new)
 
-            # Check convergence: all residuals below tolerance
             if u_err < tolerance and m_err < tolerance and y_err < tolerance:
                 print(f"\n[Success] Converged at iteration {iiter}!", flush=True)
                 break

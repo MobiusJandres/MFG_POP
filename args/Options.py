@@ -96,7 +96,7 @@ class Options:
         try:
             with open(config_out_path, 'w') as f:
                 yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
-            print(f"Saved run configuration to '{config_out_path}'", flush=True)
+            logging.info(f"Saved run configuration to '{config_out_path}'", flush=True)
         except Exception as e:
             logging.exception(f"Failed to save configuration file to {config_out_path}: {e}")
 
@@ -119,10 +119,8 @@ class Options:
         else:
             self.args.save_dir = Path.cwd() / "results" / run_identifier
 
-        self.args.save_dir.mkdir(parents=True, exist_ok=True)
-        
         # Save configuration snapshot into the timestamped results folder
+        self.args.save_dir.mkdir(parents=True, exist_ok=True)
         self._save_config()
 
-        self.args.save_dir.mkdir(parents=True, exist_ok=True)
         return self.args

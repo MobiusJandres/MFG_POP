@@ -76,6 +76,7 @@ See Also
 - mfgames/plotting.py: Visualization utilities
 """
 # Import section
+import logging
 from args.Options import Options  # Command-line argument parsing and config file loading
 from mfgames.geometry import MAP2PDE  # Spatial mesh construction and geometry handling
 from mfgames.problem import MFG2PopSolver  # Coupled 2-population MFG solver (Picard iteration)
@@ -179,7 +180,7 @@ def main():
     options.parser.add_argument('--pop2_goals', default=None, nargs='*', help='Population 2 custom goals [[x, y], ...]')
 
     args = options.parseArgs()
-    print(f"Results will be saved to: {args.save_dir}", flush=True)
+    logging.info(f"Results will be saved to: {args.save_dir}", flush=True)
 
     # Extract optional map/scenario file paths for obstacle geometry
     map_str = str(args.map_file) if getattr(args, 'map_file', None) else None
@@ -309,7 +310,7 @@ def main():
     animation_path = args.save_dir / "mfg_2pop_simulation.mp4"
     plotter.save_mp4(filename=str(animation_path), fps=30)
 
-    print("2-Population run completed successfully!", flush=True)
+    logging.info("2-Population run completed successfully!", flush=True)
 
 
 # Script entry point: Execute main() when run directly (not imported as module)

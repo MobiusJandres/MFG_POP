@@ -83,7 +83,7 @@ class MFGSolver:
         Nt: int = 100,
         thetaUM: float = 0.1,
         door_mask=None,
-        door_mask_3d=None,   # Fallback keyword argument for backward compatibility
+        door_mask_3d=None,
         goal_configs: list | None = None,
         goals_are_exits: bool = False,
         obstacle_penalty: float | None = None,
@@ -129,6 +129,7 @@ class MFGSolver:
             max_cost = self.running_cost_weight * max_grid_dist_sq
             self.obstacle_penalty = -5.0 * max_cost
 
+        # Allocate solution arrays: M for density, U for value function
         self.omask = pde_mesh_data.get_pde_obstacle_mask()
         self.m0 = pde_mesh_data.build_initial_density()
 
@@ -149,6 +150,7 @@ class MFGSolver:
                 T=T,
                 Lx=self.Lx,
                 Ly=self.Ly,
+                goals_are_exits_default=self.goals_are_exits
             )
             # Alias for backward compatibility with MFGPlotter
             self.evader_swarm = self.goal
@@ -172,14 +174,14 @@ class MFGSolver:
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
         for k in range(self.Nt + 1):
             for g_idx, g_info in enumerate(self.goal.goals):
-                is_exit = g_info.get('is_exit', self.goals_are_exits)
+                is_exit = g_info['is_exit']
                 if is_exit:
                     gx, gy = goal_trajectories[k, g_idx]
                     region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
                     door_mask[k][region] = 1.0
         return door_mask
 
-    def compute_saturated_door_mask(self, M_field, goal_trajectories):
+    def compute_saturated_door_mask(self, goal_trajectories):
         """
         Constructs time-dependent exit mask considering goal capacity limits.
 
@@ -199,28 +201,21 @@ class MFGSolver:
             return door_mask
 
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
-        cumulative_mass = np.zeros(self.goal.num_goals)
 
         for k in range(self.Nt + 1):
             for g_idx, g_info in enumerate(self.goal.goals):
-                is_exit = g_info.get('is_exit', self.goals_are_exits)
+                is_exit = g_info['is_exit']
                 if not is_exit:
                     continue
 
-                cap = g_info.get('capacity', float('inf'))
-                gx, gy = goal_trajectories[k, g_idx]
-                region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
-
-                if cumulative_mass[g_idx] < cap:
+                if not self.goal.is_saturated[k, g_idx]:
+                    gx, gy = goal_trajectories[k, g_idx]
+                    region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
                     door_mask[k][region] = 1.0
-
-                if k < self.Nt:
-                    mass_in_region = np.sum(M_field[k][region]) * self.Dx * self.Dy
-                    cumulative_mass[g_idx] += mass_in_region
 
         return door_mask
 
-    def compute_running_cost(self, goal_positions_k, k=None, M_trajectory=None):
+    def compute_running_cost(self, goal_positions_k, k=None):
         """
         Compute distance-based running cost to nearest goal at timestep k, accounting for capacity.
 
@@ -245,19 +240,10 @@ class MFGSolver:
 
         for g_idx, (gx, gy) in enumerate(goal_positions_k):
             is_active = True
-            if k is not None and M_trajectory is not None and self.goal is not None and self.goal.has_capacity_limits:
-                cap = self.goal.goals[g_idx].get('capacity', float('inf'))
-                if np.isfinite(cap):
-                    cum_mass = 0.0
-                    for t_idx in range(k + 1):
-                        cur_gx, cur_gy = self.goal.Y_trajectories[t_idx, g_idx]
-                        region = (np.abs(X - cur_gx) <= self.Dx) & (np.abs(Y - cur_gy) <= self.Dy)
-                        cum_mass += np.sum(M_trajectory[t_idx][region]) * self.Dx * self.Dy
+            if k is not None and self.goal is not None and self.goal.has_capacity_limits:
+                if self.goal.is_saturated[k, g_idx]:
+                    is_active = False
 
-                    if cum_mass >= cap:
-                        is_active = False
-
-            # Filter active (unsaturated) goals
             if is_active:
                 dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
                 active_distances.append(dist_sq)
@@ -292,7 +278,6 @@ class MFGSolver:
         m[0] = self.m0
         N_total = self.Nx * self.Ny
 
-        # Time-stepping loop: implicit solve at each timestep
         for k in range(1, self.Nt + 1):
             rows, cols, vals, b = compute_FP_matrix_entries(
                 m[k - 1], U_trajectory[k - 1], self.omask, door_mask[k - 1],
@@ -323,17 +308,17 @@ class MFGSolver:
         """
         u = np.zeros_like(self.U)
 
-        # Terminal condition at t = T
+        # Terminal condition at t = T (Positive running cost for gradient consistency)
         if goal_trajectories is not None:
-            running_cost_Nt = self.compute_running_cost(goal_trajectories[self.Nt], k=self.Nt, M_trajectory=M_trajectory)
-            u[self.Nt] = -running_cost_Nt
+            running_cost_Nt = self.compute_running_cost(goal_trajectories[self.Nt], k=self.Nt)
+            u[self.Nt] = +running_cost_Nt
         else:
             u[self.Nt] = np.zeros((self.Nx, self.Ny))
 
         # Backward time-stepping loop
         for k in range(self.Nt - 1, -1, -1):
             running_cost_k = (
-                self.compute_running_cost(goal_trajectories[k], k=k, M_trajectory=M_trajectory)
+                self.compute_running_cost(goal_trajectories[k], k=k)
                 if goal_trajectories is not None
                 else np.zeros((self.Nx, self.Ny))
             )
@@ -405,26 +390,32 @@ class MFGSolver:
             start_time = time.time()
             print(f"\n>>> Macro Picard Loop Execution: {iiter} / {max_iters}", flush=True)
 
-            goal_trajectories = self.goal.Y_trajectories if self.goal is not None else None
+            # Step 1: Update dynamic goal trajectories and saturation states given current density M
+            if self.goal is not None:
+                Y_temp = self.goal.update_positions(self.M, self.omask, self.Dx, self.Dy, self.Lx, self.Ly, self.goals_are_exits)
+                goal_trajectories = self.goal.Y_trajectories
+            else:
+                Y_temp = None
+                goal_trajectories = None
 
+            # Step 2: Build door mask from single source of truth (Goal.is_saturated)
             if self.goal is not None and self.goal.has_capacity_limits:
-                self.door_mask = self.compute_saturated_door_mask(self.M, goal_trajectories)
+                self.door_mask = self.compute_saturated_door_mask(goal_trajectories)
                 self.door_mask_3d = self.door_mask
 
-            # Step 1: Solve HJB backward in time
+            # Step 3: Solve HJB backward in time[cite: 36]
             U_temp = self.solve_backward_HJB_step(self.M, goal_trajectories, self.door_mask)
             U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
 
-            # Step 2: Solve FP forward in time
+            # Step 4: Solve FP forward in time[cite: 36]
             M_temp = self.solve_forward_FP_step(U_new, self.door_mask)
             M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
 
-            # Step 3: Update dynamic goals
-            if self.goal is not None:
-                Y_temp = self.goal.update_positions(M_new, self.omask, self.Dx, self.Dy, self.Lx, self.Ly)
+            # Step 5: Relax goal trajectories and clamp post-saturation positions across all k >= sat_k
+            if self.goal is not None and Y_temp is not None:
                 Y_new = self.thetaUM * Y_temp + (1.0 - self.thetaUM) * self.goal.Y_trajectories
 
-                # Hard-freeze post-saturation positions across Picard iterations
+                # Clamp post-saturation positions to prevent under-relaxation motion bleeding
                 for g_idx in range(self.goal.num_goals):
                     sat_k = self.goal.saturation_steps[g_idx]
                     if sat_k <= self.Nt:

@@ -155,7 +155,7 @@ See Also
 """
 
 from .geometry import MAP2PDE, create_moving_door_mask
-from .evasion import EvaderSwarm, Goal
+from .evasion import Goal
 from .solvers import solveFP_2D, solveHJB_withM
 from .plotting import MFGPlotter
 from .problem import MFGSolver

@@ -4,7 +4,7 @@ Universal command-line argument parser for all project scripts.
 import argparse
 import logging
 from pathlib import Path
-from yaml import safe_load
+import yaml
 from mfgames.time import fancy_timestamp
 
 
@@ -50,7 +50,7 @@ class Options:
 
         try:
             with open(config_path, 'r') as file:
-                settings = safe_load(file) or {}
+                settings = yaml.safe_load(file) or {}
 
             for key, value in settings.items():
                 if hasattr(self.args, key):

@@ -288,23 +288,10 @@ class MFGPlotter:
             t_idx: Time index for extracting time-dependent features (default: 0).
         """
         if self.evader_trajectories is not None and self.goal_instance is not None:
-            X, Y = self.X, self.Y
-
             for g_idx, g_info in enumerate(self.goal_instance.goals):
                 pos = self.evader_trajectories[t_idx, g_idx]
-                cap = g_info.get('capacity', float('inf'))
-
-                # Calculate cumulative mass absorbed by goal g up to frame t_idx
-                cum_mass = 0.0
-                if np.isfinite(cap) and self.M1 is not None and X is not None and Y is not None:
-                    for k in range(t_idx + 1):
-                        gx, gy = self.evader_trajectories[k, g_idx]
-                        region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
-                        cum_mass += np.sum(self.M1[k][region]) * self.Dx * self.Dy
-
-                # Set color: Red (#ff2222) if saturated, Cyan/Blue (#00f2fe) if active
-                is_saturated = cum_mass >= cap
-                marker_color = '#ff2222' if is_saturated else '#00f2fe'
+                is_sat = self.goal_instance.is_saturated[t_idx, g_idx] if hasattr(self.goal_instance, 'is_saturated') else False
+                marker_color = '#ff2222' if is_sat else '#00f2fe'
 
                 ax.scatter(
                     pos[0], pos[1],
@@ -315,23 +302,19 @@ class MFGPlotter:
                     linewidth=0.8,
                     zorder=10
                 )
-
-            if self.door_mask is not None and np.sum(self.door_mask[t_idx]) > 0:
-                xs = np.linspace(0, self.Lx, self.M1.shape[1])
-                ys = np.linspace(0, self.Ly, self.M1.shape[2])
-                ax.contour(xs, ys, self.door_mask[t_idx].T, levels=[0.5], colors="lime", linewidths=2)
         else:
-            # Standard MFG: plot static goal locations
             if self.goals_1:
                 gxs, gys = zip(*self.goals_1)
                 ax.scatter(gxs, gys, color='#ff2222', marker='X', s=70, edgecolor='white', linewidth=1.2, label='Pop 1 Goals', zorder=10)
             if self.goals_2:
                 gxs, gys = zip(*self.goals_2)
                 ax.scatter(gxs, gys, color='#2288ff', marker='X', s=70, edgecolor='white', linewidth=1.2, label='Pop 2 Goals', zorder=10)
-            if self.door_mask is not None and np.sum(self.door_mask[t_idx]) > 0:
-                xs = np.linspace(0, self.Lx, self.M1.shape[1])
-                ys = np.linspace(0, self.Ly, self.M1.shape[2])
-                ax.contour(xs, ys, self.door_mask[t_idx].T, levels=[0.5], colors="lime", linewidths=2)
+
+        # Draw active exit door contours if a door mask exists
+        if self.door_mask is not None and np.sum(self.door_mask[t_idx]) > 0:
+            xs = np.linspace(0, self.Lx, self.M1.shape[1])
+            ys = np.linspace(0, self.Ly, self.M1.shape[2])
+            ax.contour(xs, ys, self.door_mask[t_idx].T, levels=[0.5], colors="lime", linewidths=2)
 
     def _build_combined_rgb(self, m1_frame, m2_frame, m1_max, m2_max):
         """

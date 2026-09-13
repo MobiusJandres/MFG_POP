@@ -34,7 +34,7 @@ import time
 import numpy as np
 import scipy.sparse as sparse
 import scipy.sparse.linalg
-from mfgames.evasion import Goal
+from mfgames.objectives import Goal
 from mfgames.numerics import (
     compute_FP_matrix_entries,
     getFnU_2D,

@@ -36,8 +36,14 @@ class Options:
         self.parser.add_argument('--max_iters', default=10, type=int, help='Maximum Picard relaxation iterations.')
         self.parser.add_argument('--relaxation_theta', default=0.1, type=float, help='Picard under-relaxation parameter.')
 
-        # --- Evader Dynamics ---
-        self.parser.add_argument('--v_max_evader', default=15.0, type=float, help='Evader maximum speed limit (m/s).')
+        # --- Goal Dynamics ---
+        self.parser.add_argument('--v_max_evader', default=15.0, type=float, help='Default goal maximum speed limit (m/s).')
+        self.parser.add_argument(
+            '--saturated_goal_penalty', 
+            default=0.0, 
+            type=float, 
+            help='Repulsive cost weight added around saturated goals (0.0 disables penalty).'
+)
 
         self._paths = ['config', 'map_file', 'scen_file', 'results_dir']
 

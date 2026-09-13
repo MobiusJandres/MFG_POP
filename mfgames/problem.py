@@ -88,6 +88,7 @@ class MFGSolver:
         goals_are_exits: bool = False,
         obstacle_penalty: float | None = None,
         running_cost_weight: float = 0.01,
+        saturated_goal_penalty: float = 0.0,  # New parameter
     ):
         """
         Initialize the Mean Field Game solver.
@@ -119,6 +120,7 @@ class MFGSolver:
         self.thetaUM = thetaUM
         self.goals_are_exits = goals_are_exits
         self.running_cost_weight = running_cost_weight
+        self.saturated_goal_penalty = saturated_goal_penalty  # Store parameter
 
         # Dynamically scale obstacle penalty relative to max potential drop on grid if not provided.
         # This ensures obstacles remain strongly repulsive regardless of domain size.
@@ -152,8 +154,8 @@ class MFGSolver:
                 Ly=self.Ly,
                 goals_are_exits_default=self.goals_are_exits
             )
-            # Alias for backward compatibility with MFGPlotter
-            self.evader_swarm = self.goal
+            # # Alias for backward compatibility with MFGPlotter
+            # self.evader_swarm = self.goal
             self.door_mask = self._build_dynamic_goal_doors(self.goal.Y_trajectories)
         else:
             self.goal = None
@@ -237,6 +239,7 @@ class MFGSolver:
 
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
         active_distances = []
+        saturated_repulsion = np.zeros((self.Nx, self.Ny))
 
         for g_idx, (gx, gy) in enumerate(goal_positions_k):
             is_active = True
@@ -247,13 +250,18 @@ class MFGSolver:
             if is_active:
                 dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
                 active_distances.append(dist_sq)
+            elif self.saturated_goal_penalty > 0.0:
+                # Add Gaussian repulsive barrier around closed/saturated goal location
+                dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
+                sigma_sq = (10.0 * self.Dx) ** 2
+                saturated_repulsion += self.saturated_goal_penalty * np.exp(-dist_sq / (2.0 * sigma_sq))
 
         if active_distances:
             min_dist_sq = np.minimum.reduce(active_distances)
         else:
             min_dist_sq = np.zeros((self.Nx, self.Ny))
 
-        return self.running_cost_weight * min_dist_sq
+        return self.running_cost_weight * min_dist_sq + saturated_repulsion
 
     def solve_forward_FP_step(self, U_trajectory, door_mask):
         """

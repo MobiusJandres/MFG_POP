@@ -223,7 +223,8 @@ class MFGPlotter:
         self.U2 = getattr(solver_instance, 'U2', None)
 
         # Goal manager and trajectory tracking
-        self.goal_instance = getattr(solver_instance, 'goal', getattr(solver_instance, 'evader_swarm', None))
+        # self.goal_instance = getattr(solver_instance, 'goal', getattr(solver_instance, 'evader_swarm', None))
+        self.goal_instance = getattr(solver_instance, 'goal', None)
         self.evader_trajectories = getattr(self.goal_instance, 'Y_trajectories', None)
 
         # Spatial masks

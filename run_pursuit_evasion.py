@@ -141,14 +141,15 @@ def main():
     # ============================================================================
     # Initialize MFG solver with mesh, time discretization, and population parameters
     mfg_solver = MFGSolver(
-        pde_mesh_data=pde_mesh,                       # Spatial mesh with obstacles/doors
-        T=args.T,                                     # Time horizon (seconds)
-        Nt=args.Nt,                                   # Number of time steps
-        thetaUM=args.relaxation_theta,                # Picard relaxation (0 < theta < 1)
-        goal_configs=goal_configs,                    # Heterogeneous population targets
-        goals_are_exits=args.goals_are_exits,         # Exit mode vs potential well mode
-        obstacle_penalty=args.obstacle_penalty,       # Negative for repulsion barriers
-        running_cost_weight=args.running_cost_weight  # Congestion sensitivity scaling
+        pde_mesh_data=pde_mesh,                              # Spatial mesh with obstacles/doors
+        T=args.T,                                            # Time horizon (seconds)
+        Nt=args.Nt,                                          # Number of time steps
+        thetaUM=args.relaxation_theta,                       # Picard relaxation (0 < theta < 1)
+        goal_configs=goal_configs,                           # Heterogeneous population targets
+        goals_are_exits=args.goals_are_exits,                # Exit mode vs potential well mode
+        obstacle_penalty=args.obstacle_penalty,              # Negative for repulsion barriers
+        running_cost_weight=args.running_cost_weight,        # Congestion sensitivity scaling
+        saturated_goal_penalty=args.saturated_goal_penalty,  # Saturated goal repulsion penalty
     )
 
     # ============================================================================

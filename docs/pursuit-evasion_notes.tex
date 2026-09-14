@@ -16,7 +16,7 @@
 \maketitle
 
 \begin{abstract}
-This document establishes a formal mathematical framework for modeling the interaction between a continuum of minor players (a crowd) and an active, strategic major player (an evading goal) within a bounded spatial domain containing obstacles. The system is formulated as a Major-Minor Pursuit-Evasion Mean Field Game (PE-MFG). We detail the backward Hamilton-Jacobi-Bellman (HJB) equation governing optimal drone navigation, the forward Kolmogorov-Fokker-Planck (KFP) equation modeling crowd mass transport, and the state-costate differential equations determining the evader's optimal escape trajectory. Finally, an extended damped Picard fixed-point scheme is presented for numerical computation.
+This document establishes a formal mathematical framework for modeling the interaction between a continuum of minor players (a crowd) and an active, strategic major player (an evading goal) within a bounded spatial domain containing obstacles. The system is formulated as a Major-Minor Pursuit-Evasion Mean Field Game (PE-MFG). We detail the backward Hamilton-Jacobi-Bellman (HJB) equation governing optimal crowd navigation, the forward Kolmogorov-Fokker-Planck (KFP) equation modeling crowd mass transport, and the state-costate differential equations determining the evader's optimal escape trajectory. Finally, an extended damped Picard fixed-point scheme is presented for numerical computation.
 \end{abstract}
 
 \section{Introduction \& Domain Configuration}
@@ -30,10 +30,10 @@ The system consists of two distinct agent classes:
 
 \section{Minor Player (Crowd) Dynamics}
 
-Each individual drone minimizes a cost functional penalizing running distance to the dynamic goal $y(t)$, spatial congestion, and control effort.
+Each individual crowd member minimizes a cost functional penalizing running distance to the dynamic goal $y(t)$, spatial congestion, and control effort.
 
 \subsection{Hamilton-Jacobi-Bellman (HJB) Equation}
-Let $u(t, x)$ denote the value function (expected cost-to-go) of a drone at position $x$ and time $t$. The value function satisfies the backward-in-time HJB equation \cite{caines2017mean}:
+Let $u(t, x)$ denote the value function (expected cost-to-go) of a crowd member at position $x$ and time $t$. The value function satisfies the backward-in-time HJB equation \cite{caines2017mean}:
 \begin{equation}
 \label{eq:hjb}
 -\frac{\partial u}{\partial t} - \sigma \Delta u + H(x, m, \nabla u) = f(x, y(t)), \quad (t, x) \in (0, T) \times \Omega,
@@ -87,7 +87,7 @@ The costate vector $p_E(t)$ satisfies the adjoint backward differential equation
 \dot{p}_E(t) = \int_{\Omega} \nabla_y \Phi(x - y(t)) m(t, x) \, dx, \quad p_E(T) = -\nabla_y G(y(T)).
 \end{equation}
 
-Differentiating the trajectory equation yields a second-order equation of motion driven by the macroscopic threat field:
+Differentiating the trajectory equation yields a second-order equation of motion driven by the macroscopic density gradient field:
 \begin{equation}
 \label{eq:goal_acceleration}
 \ddot{y}(t) = -\frac{1}{\gamma} \int_{\Omega} \nabla_y \Phi(x - y(t)) m(t, x) \, dx.

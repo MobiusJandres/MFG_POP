@@ -12,7 +12,7 @@ class Options:
     """Universal command-line argument and YAML config parser for MFG scripts."""
 
     def __init__(self) -> None:
-        self.parser = argparse.ArgumentParser(description="Mean Field Games Drone Simulation Suite")
+        self.parser = argparse.ArgumentParser(description="Mean Field Games Crowd Dynamics Simulation Suite")
 
         # --- Core Execution & Logging Arguments ---
         self.parser.add_argument('--config', default='configs/map_simulation.yml', type=str, help='Path to YAML run configuration file.')

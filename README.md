@@ -145,8 +145,8 @@ The repository includes three ready-to-run examples:
 # 1. Traffic evacuation (50m × 50m room with exit doors)
 python run_mfg_traffic.py
 
-# 2. Pursuit-evasion (multiple moving goals on MovingAI map)
-python run_pursuit_evasion.py
+# 2. Crowd flow and dynamic goals on a MovingAI map
+python run_map_simulation.py
 
 # 3. Two-population game (coupled crowds with distinct goals)
 python run_2pop.py

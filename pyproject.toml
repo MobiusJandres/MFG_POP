@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mfgames"
 version = "0.1.0"
-description = "A Mean Field Games (MFG) library for modeling drone traffic flow and pursuit-evasion dynamics."
+description = "A Mean Field Games (MFG) library for modeling crowd flow dynamics."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

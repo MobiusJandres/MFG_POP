@@ -1,6 +1,6 @@
 # mfgames
 
-A Python library for solving **Mean Field Games (MFG)** with applications to crowd traffic flow, pursuit-evasion dynamics, and multi-population interactions. Built with Numba-accelerated finite difference methods for fast, scalable simulations of crowd dynamics and optimal control problems.
+A Python library for solving **Mean Field Games (MFG)** with applications to multi-agent coordination, crowd dynamics, and multi-population interactions. Supports diverse scenarios including traffic flow optimization, evacuation planning, dynamic target tracking, and competitive/cooperative agent systems. Built with Numba-accelerated finite difference methods for fast, scalable simulations.
 
 ## Overview
 
@@ -72,6 +72,21 @@ This models agents moving optimally toward low-cost regions while slowing down i
 - **Boundary Conditions**:
   - Dirichlet at exits/doors (u = 0)
   - Neumann at solid walls (zero normal derivative)
+
+## Application Domains
+
+This library provides a general mathematical framework applicable to diverse coordination problems:
+
+### Civilian & Research Applications
+- **Urban Planning**: Evacuation route design, pedestrian flow optimization
+- **Transportation**: Traffic management, autonomous vehicle coordination
+- **Ecology**: Wildlife migration modeling, predator-prey dynamics
+- **Robotics**: Multi-robot coordination, swarm path planning
+- **Economics**: Market dynamics, resource allocation games
+- **Crowd Management**: Event planning, venue design, public safety
+
+### Mathematical Framework
+The underlying Mean Field Games theory is domain-agnostic. The same numerical solvers apply across scenarios by adjusting initial conditions, goal configurations, and cost functions.
 
 ## Installation
 
@@ -145,7 +160,7 @@ The repository includes three ready-to-run examples:
 # 1. Traffic evacuation (50m × 50m room with exit doors)
 python run_mfg_traffic.py
 
-# 2. Crowd flow and dynamic goals on a MovingAI map
+# 2. Dynamic multi-agent coordination on MovingAI maps
 python run_map_simulation.py
 
 # 3. Two-population game (coupled crowds with distinct goals)
@@ -180,17 +195,17 @@ goals_are_exits: true
 
 **Outputs**: Density evolution animation, value function snapshots, dashboard plots.
 
-### 2. Pursuit-Evasion (`run_pursuit_evasion.py`)
+### 2. Dynamic Multi-Agent Coordination (`run_map_simulation.py`)
 
-Simulates a crowd chasing moving goals that optimize their escape routes.
+Models populations interacting with dynamic goals that respond to agent density distributions. Goals optimize trajectories based on repulsive potential fields, enabling scenarios such as evacuation routing with adaptive exit selection, target tracking with evasive objectives, wildlife migration with predator avoidance, and traffic flow with congestion-responsive routing.
 
 **Key Features**:
 - Moving goals react to crowd density gradient
-- Heterogeneous goal types (stationary, prescribed paths, evaders)
+- Heterogeneous goal types (stationary, prescribed paths, reactive)
 - MovingAI map import for realistic obstacle layouts
-- Negative obstacle penalty (attractive potential for pursuers)
+- Tunable obstacle penalty (repulsive or attractive depending on scenario)
 
-**Configuration** (`configs/pursuit_evasion.yml`):
+**Configuration** (`configs/map_simulation.yml`):
 ```yaml
 map_file: "MAP2PDE/Maps/AcrosstheCape.map"
 scen_file: "MAP2PDE/Scenarios/AcrosstheCape_1g.map.scen"
@@ -212,13 +227,13 @@ goals:
     v_max: 25.0
 ```
 
-**Outputs**: Evader trajectory overlays, pursuer density heatmaps, animated pursuit dynamics.
+**Outputs**: Reactive goal trajectory overlays, crowd density heatmaps, animated dynamics.
 
-#### Pursuit-Evasion Dynamics: Heuristic Evader Model
+#### Reactive Goal Dynamics: Repulsive Force Model
 
-The pursuit-evasion mode uses a **simplified heuristic approach** for evader dynamics that provides intuitive, computationally efficient behavior while maintaining the full MFG framework.
+The dynamic goal mode uses a computationally efficient **repulsive force model** for goals that respond to agent density distributions. This approach enables reactive behavior without full game-theoretic optimal control.
 
-**Evader Dynamics Implementation** (`mfgames/evasion.py`):
+**Reactive Goal Implementation** (`mfgames/objectives.py`):
 
 Rather than solving a full game-theoretic optimal control problem, evaders use a **greedy repulsive force model**:
 
@@ -228,7 +243,7 @@ Rather than solving a full game-theoretic optimal control problem, evaders use a
    F_x = Σ_grid [(x_evader - x_i) / (dist² + ε)] * m(x_i)
    F_y = Σ_grid [(y_evader - y_i) / (dist² + ε)] * m(x_i)
    ```
-   where m(x_i) is the pursuer density at grid point i, and ε = 1e-3 prevents singularities.
+   where m(x_i) is the crowd density at grid point i, and ε = 1e-3 prevents singularities.
 
 2. **Velocity Normalization**:
    ```python
@@ -238,23 +253,23 @@ Rather than solving a full game-theoretic optimal control problem, evaders use a
    ```
 
 3. **Integration with MFG Solver**:
-   - Each Picard iteration: HJB → KFP → **Evader Update** → repeat
-   - Pursuers solve full HJB-KFP system with dynamic goal y(t)
-   - Evaders respond myopically to current pursuer distribution
+   - Each Picard iteration: HJB → KFP → **Goal Update** → repeat
+   - Crowd solves full HJB-KFP system with dynamic goal y(t)
+   - Goals respond myopically to current crowd distribution
    - Under-relaxation applied to trajectories: y^(k) = θ·y_new + (1-θ)·y^(k-1)
 
 **Physical Interpretation**:
 
-The evader moves **directly away from the weighted center of mass** of nearby pursuers. Close pursuers contribute more strongly (inverse-square law), creating a "flee to open space" behavior similar to electrostatic repulsion. This produces realistic evasion without solving nested optimal control problems.
+The reactive goal moves **directly away from the weighted center of mass** of nearby crowd density. Closer agents contribute more strongly (inverse-square law), creating a "move to open space" behavior similar to electrostatic repulsion. This produces realistic reactive dynamics without solving nested optimal control problems.
 
 **Comparison to Full Game-Theoretic Framework**:
 
 A rigorous **Major-Minor Mean Field Game** formulation (not currently implemented) would include:
 
-- **Evader cost functional**: Minimize cumulative exposure to crowd dyanics + control effort penalty
+- **Goal cost functional**: Minimize cumulative exposure to crowd dynamics + control effort penalty
 - **Pontryagin's Maximum Principle**: Derive optimal velocity via costate (adjoint) equations
 - **Backward-forward coupling**: Costate integrated backward from terminal cost, trajectory forward from initial position
-- **Nash Equilibrium**: Both pursuers and evaders optimally respond to each other
+- **Nash Equilibrium**: Both crowd and reactive goals optimally respond to each other
 
 **Current Heuristic Benefits**:
 - ✅ **Fast**: One force summation per evader per timestep (~30 lines of code)
@@ -270,10 +285,13 @@ A rigorous **Major-Minor Mean Field Game** formulation (not currently implemente
 
 **Practical Use Cases**:
 
-The heuristic model is well-suited for:
-- Qualitative pursuit-evasion scenario exploration
-- Real-time or interactive applications
-- Fast prototyping of crowd dynamics
+The repulsive force model is well-suited for:
+- Interactive multi-agent coordination scenarios
+- Real-time simulation and decision support systems
+- Evacuation planning with dynamic exit selection
+- Wildlife conservation (modeling predator-prey interactions)
+- Crowd management with moving service points
+- Traffic routing with congestion-responsive signals
 
 For safety-critical systems requiring provable optimality or formal game-theoretic guarantees, implementing the full Major-Minor framework (costate equations, terminal costs, Pontryagin's Principle) would be the recommended extension.
 
@@ -317,7 +335,7 @@ mfgames/
 ├── solvers.py           # solveFP_2D, solveHJB_withM (low-level PDE solvers)
 ├── numerics.py          # Numba-compiled matrix assembly and FD operators
 ├── geometry.py          # MAP2PDE, MFGTrafficGeometry (spatial grids, obstacles)
-├── evasion.py           # Goal (dynamic goal management)
+├── objectives.py        # Goal (dynamic goal management)
 ├── plotting.py          # MFGPlotter (visualization and animation)
 └── time.py              # Timestamped directory utilities
 ```
@@ -325,7 +343,7 @@ mfgames/
 ### Module Overview
 
 - **`problem.py`**: Object-oriented solvers wrapping the full Picard iteration workflow
-  - `MFGSolver`: Single-population traffic and pursuit-evasion
+  - `MFGSolver`: Single-population traffic and dynamic coordination
   - `MFG2PopSolver`: Two-population coupled system
 
 - **`solvers.py`**: Low-level PDE solution routines called by `MFGSolver`
@@ -342,7 +360,7 @@ mfgames/
   - `MFGTrafficGeometry`: Simple rectangular domains for evacuation scenarios
   - `create_moving_door_mask()`: Time-varying exit boundary conditions
 
-- **`evasion.py`**: Dynamic goal management
+- **`objectives.py`**: Dynamic goal management
   - `Goal`: Heterogeneous goal handler (stationary, prescribed, evader)
 
 - **`plotting.py`**: Visualization toolkit
@@ -501,7 +519,7 @@ On a modern CPU (example: Intel i7-9700K):
 | Scenario | Grid Size | Time Steps | Picard Iters | Runtime |
 |----------|-----------|------------|--------------|---------|
 | Traffic | 75×75 | 600 | 25 | ~2 min |
-| Pursuit-Evasion | 100×100 | 150 | 15 | ~3 min |
+| Dynamic Coordination | 100×100 | 150 | 15 | ~3 min |
 | 2-Population | 75×75 | 150 | 15 | ~4 min |
 
 **Optimization Tips**:
@@ -564,4 +582,4 @@ For questions, bug reports, or feature requests, please open an issue on the rep
 
 ---
 
-**Project Status**: Beta (v0.1.0) — Active development, API subject to change
+**Project Status**: Beta (v0.1.1) — Active development, API subject to change

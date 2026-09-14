@@ -1,9 +1,9 @@
 """
 Goal management module supporting stationary goals, prescribed paths, and evasive goals.
 
-This module implements the target/goal dynamics for Mean Field Games simulations,
+This module implements the goal dynamics for Mean Field Games simulations,
 supporting three types of goal behavior:
-1. Stationary: Fixed position targets (e.g., exit doors)
+1. Stationary: Fixed position goals (e.g., exit doors)
 2. Prescribed: Time-dependent parametric trajectories (e.g., moving obstacles)
 3. Evader: Dynamically reactive goals that move away from swarm density using
    repulsive force fields (implements evasion game dynamics)
@@ -62,15 +62,15 @@ class Goal:
     This class handles all goal dynamics in the Mean Field Games framework, supporting
     three operational modes:
 
-    1. **Stationary goals**: Fixed spatial targets (e.g., exit doors, destinations)
+    1. **Stationary goals**: Fixed spatial goals (e.g., exit doors, destinations)
        - Position remains constant: Y(t) = Y₀ for all t
        - Defines Dirichlet boundary conditions for value function u
 
     2. **Prescribed goals**: Deterministic time-dependent trajectories
        - Position follows analytical expressions: Y(t) = [x(t), y(t)]
-       - Useful for modeling moving obstacles or predictable targets
+       - Useful for modeling moving obstacles or predictable goals
 
-    3. **Evader goals**: Dynamically reactive targets using repulsive force fields
+    3. **Evader goals**: Dynamically reactive goals using repulsive force fields
        - Velocity computed from swarm density M(x,y,t) via inverse-square repulsion
        - Implements evasion game: dY/dt = v_max * ∇Φ(Y, M) where Φ is repulsive potential
        - Maximum speed constraint v_max enforces bounded evasion capability
@@ -174,7 +174,7 @@ class Goal:
 
         This property determines whether the MFG solver needs to use the full iterative
         update scheme (Picard iteration with goal position updates) or can use a simpler
-        fixed-target solver.
+        fixed-goal solver.
 
         Returns:
             bool: True if any goal is type 'evader' or 'prescribed', False if all stationary
@@ -290,8 +290,3 @@ class Goal:
                         new_trajectories[k + 1, g] = [curr_x, curr_y]
 
         return new_trajectories
-
-
-# Backward compatibility aliases
-TargetSwarm = Goal
-EvaderSwarm = Goal

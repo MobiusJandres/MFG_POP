@@ -16,21 +16,21 @@
 \maketitle
 
 \begin{abstract}
-This document establishes a formal mathematical framework for modeling the interaction between a continuum of minor players (a drone swarm) and an active, strategic major player (an evading target) within a bounded spatial domain containing obstacles. The system is formulated as a Major-Minor Pursuit-Evasion Mean Field Game (PE-MFG). We detail the backward Hamilton-Jacobi-Bellman (HJB) equation governing optimal drone navigation, the forward Kolmogorov-Fokker-Planck (KFP) equation modeling swarm mass transport, and the state-costate differential equations determining the evader's optimal escape trajectory. Finally, an extended damped Picard fixed-point scheme is presented for numerical computation.
+This document establishes a formal mathematical framework for modeling the interaction between a continuum of minor players (a drone swarm) and an active, strategic major player (an evading goal) within a bounded spatial domain containing obstacles. The system is formulated as a Major-Minor Pursuit-Evasion Mean Field Game (PE-MFG). We detail the backward Hamilton-Jacobi-Bellman (HJB) equation governing optimal drone navigation, the forward Kolmogorov-Fokker-Planck (KFP) equation modeling swarm mass transport, and the state-costate differential equations determining the evader's optimal escape trajectory. Finally, an extended damped Picard fixed-point scheme is presented for numerical computation.
 \end{abstract}
 
 \section{Introduction \& Domain Configuration}
-Let $\Omega \subset \mathbb{R}^2$ be a bounded domain with boundary $\partial\Omega = \Gamma_{\text{wall}} \cup \Gamma_{\text{door}}$, where $\Gamma_{\text{wall}}$ represents solid obstacles enforcing zero-flux Neumann conditions and $\Gamma_{\text{door}}(t)$ denotes time-dependent exit/target boundaries. We model a time horizon $t \in [0, T]$.
+Let $\Omega \subset \mathbb{R}^2$ be a bounded domain with boundary $\partial\Omega = \Gamma_{\text{wall}} \cup \Gamma_{\text{door}}$, where $\Gamma_{\text{wall}}$ represents solid obstacles enforcing zero-flux Neumann conditions and $\Gamma_{\text{door}}(t)$ denotes time-dependent exit/goal boundaries. We model a time horizon $t \in [0, T]$.
 
 The system consists of two distinct agent classes:
 \begin{enumerate}
     \item \textbf{Minor Players (Drone Swarm):} A continuum of statistically identical agents whose macroscopic spatial density at time $t$ and location $x \in \Omega$ is given by $m(t, x) \ge 0$.
-    \item \textbf{Major Player (Evader/Target):} A single dominant agent located at position $y(t) \in \Omega$, actively adjusting its velocity $a(t) \in \mathbb{R}^2$ to escape the approaching swarm.
+    \item \textbf{Major Player (Dynamic Goal):} A single dominant agent located at position $y(t) \in \Omega$, actively adjusting its velocity $a(t) \in \mathbb{R}^2$ to escape the approaching swarm.
 \end{enumerate}
 
 \section{Minor Player (Swarm) Dynamics}
 
-Each individual drone minimizes a cost functional penalizing running distance to the dynamic target $y(t)$, spatial congestion, and control effort.
+Each individual drone minimizes a cost functional penalizing running distance to the dynamic goal $y(t)$, spatial congestion, and control effort.
 
 \subsection{Hamilton-Jacobi-Bellman (HJB) Equation}
 Let $u(t, x)$ denote the value function (expected cost-to-go) of a drone at position $x$ and time $t$. The value function satisfies the backward-in-time HJB equation \cite{caines2017mean}:
@@ -46,7 +46,7 @@ H(x, m, p) = \frac{c_0 |p|^2}{(1 + m)^\alpha} - f_0,
 \end{equation}
 where $\alpha \in (0, 1]$ represents the congestion exponent and $c_0, f_0 > 0$ are physical parameters.
 
-The running cost $f(x, y(t))$ penalizes the spatial separation from the target:
+The running cost $f(x, y(t))$ penalizes the spatial separation from the goal:
 \begin{equation}
 f(x, y(t)) = \frac{\chi}{2} \|x - y(t)\|^2,
 \end{equation}
@@ -62,21 +62,21 @@ subject to initial density $m(0, x) = m_0(x)$, homogeneous Neumann boundary cond
 
 \section{Major Player (Evader) Optimal Control}
 
-The target's trajectory $y(t)$ evolves according to its velocity control $a(t) \in \mathbb{R}^2$:
+The goal's trajectory $y(t)$ evolves according to its velocity control $a(t) \in \mathbb{R}^2$:
 \begin{equation}
 \dot{y}(t) = a(t), \quad y(0) = y_0.
 \end{equation}
 
-\subsection{Target Cost Functional}
-The target seeks to maximize its distance from high swarm density regions while minimizing kinetic expenditure \cite{bergault2024mean, wan2021improved}:
+\subsection{Goal Cost Functional}
+The goal seeks to maximize its distance from high swarm density regions while minimizing kinetic expenditure \cite{bergault2024mean, wan2021improved}:
 \begin{equation}
-\label{eq:target_cost}
+\label{eq:goal_cost}
 J_E(a) = \int_0^T \left( \int_{\Omega} \Phi(x - y(t)) m(t, x) \, dx + \frac{\gamma}{2} \|a(t)\|^2 \right) dt - G(y(T)),
 \end{equation}
 where $\Phi(r)$ is a repelling interaction kernel (e.g., Gaussian interaction $\Phi(r) = w_0 \exp(-\|r\|^2 / (2 r_0^2))$) and $\gamma > 0$ denotes control effort cost.
 
 \subsection{Pontryagin's Maximum Principle \& Escape Force}
-Defining the target costate vector $p_E(t) \in \mathbb{R}^2$, Pontryagin's Maximum Principle yields the optimal escape velocity \cite{badakaya2022game}:
+Defining the goal costate vector $p_E(t) \in \mathbb{R}^2$, Pontryagin's Maximum Principle yields the optimal escape velocity \cite{badakaya2022game}:
 \begin{equation}
 a^*(t) = -\frac{p_E(t)}{\gamma}.
 \end{equation}
@@ -89,7 +89,7 @@ The costate vector $p_E(t)$ satisfies the adjoint backward differential equation
 
 Differentiating the trajectory equation yields a second-order equation of motion driven by the macroscopic threat field:
 \begin{equation}
-\label{eq:target_acceleration}
+\label{eq:goal_acceleration}
 \ddot{y}(t) = -\frac{1}{\gamma} \int_{\Omega} \nabla_y \Phi(x - y(t)) m(t, x) \, dx.
 \end{equation}
 
@@ -113,7 +113,7 @@ To compute the coupled equilibrium, we employ an iterative fixed-point algorithm
     \item \textbf{Initialization:} Set initial guesses $U^{(0)}(t, x)$, $M^{(0)}(t, x)$, and $y^{(0)}(t)$ for $t \in [0, T]$.
     \item \textbf{Step 1 (HJB Backward):} Solve Eq.~\eqref{eq:hjb} backward from $t = T$ to $t = 0$ using $M^{(k-1)}$ and $y^{(k-1)}$ to obtain $\tilde{U}^{(k)}$. Update $U^{(k)} = \theta \tilde{U}^{(k)} + (1-\theta) U^{(k-1)}$.
     \item \textbf{Step 2 (KFP Forward):} Solve Eq.~\eqref{eq:kfp} forward from $t = 0$ to $t = T$ using $U^{(k)}$ to obtain $\tilde{M}^{(k)}$. Update $M^{(k)} = \theta \tilde{M}^{(k)} + (1-\theta) M^{(k-1)}$.
-    \item \textbf{Step 3 (Target Trajectory Forward/Backward):} Integrate Eq.~\eqref{eq:costate} backward and trajectory $\dot{y}(t)$ forward using $M^{(k)}$ to obtain $\tilde{y}^{(k)}(t)$. Update $y^{(k)} = \theta \tilde{y}^{(k)} + (1-\theta) y^{(k-1)}$.
+    \item \textbf{Step 3 (Goal Trajectory Forward/Backward):} Integrate Eq.~\eqref{eq:costate} backward and trajectory $\dot{y}(t)$ forward using $M^{(k)}$ to obtain $\tilde{y}^{(k)}(t)$. Update $y^{(k)} = \theta \tilde{y}^{(k)} + (1-\theta) y^{(k-1)}$.
     \item \textbf{Convergence Check:} Repeat until $\|U^{(k)} - U^{(k-1)}\|_2 < \epsilon$ and $\|M^{(k)} - M^{(k-1)}\|_2 < \epsilon$.
 \end{enumerate}
 

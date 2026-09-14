@@ -16,7 +16,7 @@ Each solver solves a coupled system of PDEs via Picard iteration:
 - Kolmogorov-Fokker-Planck (KFP) equation: Forward in time, evolves population density (m)
 
 MFGSolver consolidates time-stepping loops for both static exit doors
-and dynamic target goals into a unified execution path. The Picard iteration alternates
+and dynamic goals into a unified execution path. The Picard iteration alternates
 between solving HJB given density m, then solving KFP given value u, with under-relaxation
 (thetaUM parameter) to stabilize convergence.
 """
@@ -41,9 +41,9 @@ class MFGSolver:
 
     This solver handles drone swarms navigating toward static or dynamic goals in a 2D
     spatial domain with obstacles[cite: 9]. It handles static exit locations, moving doors,
-    and reactive target goals (where goals flee from pursuer density)[cite: 9].
+    and reactive goals (where goals move away from crowds).
 
-    The solver uses Picard iteration to solve the coupled HJB-KFP system[cite: 9]. The value
+    The solver uses Picard iteration to solve the coupled HJB-KFP system. The value
     function u represents cost-to-go to the nearest goal, while the density m represents
     the spatial distribution of the swarm over time[cite: 9].
 
@@ -65,7 +65,7 @@ class MFGSolver:
         m0 (ndarray): Initial density distribution (Nx, Ny)
         M (ndarray): Density trajectory (Nt+1, Nx, Ny) - solution to KFP equation
         U (ndarray): Value function trajectory (Nt+1, Nx, Ny) - solution to HJB equation
-        goal (Goal|None): Goal/target object managing dynamic goal trajectories
+        goal (Goal|None): Goal object managing dynamic goal trajectories
         door_mask_3d (ndarray): Time-dependent exit/goal mask (Nt+1, Nx, Ny)
     """
 
@@ -184,7 +184,7 @@ class MFGSolver:
         Compute distance-based running cost to nearest goal at timestep k.
 
         The running cost penalizes distance from goals, incentivizing the swarm to
-        move toward the nearest target. Uses squared Euclidean distance weighted by
+        move toward the nearest. Uses squared Euclidean distance weighted by
         running_cost_weight parameter.
 
         Args:

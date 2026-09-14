@@ -91,7 +91,7 @@ Make sure your Python environment has the following libraries installed:
 
 ### Running a Simulation
 
-Ensure your target `.map` and `.scen` files are placed in the `Maps/` and `Scenarios/` folders respectively, then execute:
+Ensure your goal `.map` and `.scen` files are placed in the `Maps/` and `Scenarios/` folders respectively, then execute:
 
 Also note for the purpose of using this for trajectories, since we are a single population you must change the `.scen` goals to be a single one for the supposed agents. Reminder that we are making small blobs in representation of these agents. 
 

@@ -530,7 +530,7 @@ class MFGPlotter:
             ax.set_xlabel("X (meters)")
             ax.set_ylabel("Y (meters)")
             fig.colorbar(im, ax=ax, label='Value')
-            # Plot the target goals as bright cyan 'X' markers
+            # Plot the goals as bright cyan 'X' markers
             if show_goals and self.goals:
                 gxs, gys = zip(*self.goals)
                 ax.scatter(gxs, gys, color='#00f2fe', marker='X', s=50, 
@@ -603,7 +603,7 @@ class MFGPlotter:
         print(f"Successfully exported {self.Nt + 1} frames to folder '{output_dir}'.")
 # %%
 if __name__ == "__main__":
-    # Specify the target files and room sizing constants
+    # Specify the goals files and room sizing constants
     MAP_FILE ="Maps/AcrosstheCape.map"
     SCEN_FILE = "Scenarios/AcrosstheCape_1g.map.scen" #All densities have same goal.
     

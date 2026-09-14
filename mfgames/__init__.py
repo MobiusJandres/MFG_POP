@@ -31,8 +31,7 @@ geometry : Spatial domain and obstacle configuration
     - create_moving_door_mask: Dynamic exit door trajectory generation
 
 evasion : Goal and evader trajectory management
-    - Goal: Handles stationary goals, prescribed paths, and evasive targets
-    - EvaderSwarm: Alias for Goal (backward compatibility)
+    - Goal: Handles stationary goals, prescribed paths, and evasive goals
 
 solvers : Low-level PDE time-stepping routines
     - solveFP_2D: Forward-in-time Fokker-Planck density evolution
@@ -63,7 +62,7 @@ Typical Usage
     >>> mesh.parse_files(num_agents=50)
     >>> mesh.build_spatial_mesh()
     >>>
-    >>> # Configure evader goals (moving targets)
+    >>> # Configure evader goals (goals which move away from a crowd)
     >>> goals = [{'type': 'evader', 'position': [400, 400], 'v_max': 15.0}]
     >>>
     >>> # Solve coupled MFG system
@@ -163,7 +162,6 @@ from .problem import MFGSolver
 __all__ = [
     "MAP2PDE",
     "create_moving_door_mask",
-    "EvaderSwarm",
     "Goal",
     "solveFP_2D",
     "solveHJB_withM",

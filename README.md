@@ -1,6 +1,6 @@
 # mfgames
 
-A Python library for solving **Mean Field Games (MFG)** with applications to drone swarm traffic flow, pursuit-evasion dynamics, and multi-population interactions. Built with Numba-accelerated finite difference methods for fast, scalable simulations of crowd dynamics and optimal control problems.
+A Python library for solving **Mean Field Games (MFG)** with applications to crowd traffic flow, pursuit-evasion dynamics, and multi-population interactions. Built with Numba-accelerated finite difference methods for fast, scalable simulations of crowd dynamics and optimal control problems.
 
 ## Overview
 
@@ -8,7 +8,7 @@ A Python library for solving **Mean Field Games (MFG)** with applications to dro
 
 ### What Problems Does It Solve?
 
-- **Drone Swarm Traffic Flow**: Model evacuation dynamics through moving doors with congestion penalties
+- **Crowd Traffic Flow**: Model evacuation dynamics through moving doors with congestion penalties
 - **Multi-Population Interactions**: Couple multiple agent populations with distinct objectives and interaction costs
 - **Crowd Dynamics with Obstacles**: Handle complex geometries imported from MovingAI benchmark maps
 
@@ -148,7 +148,7 @@ python run_mfg_traffic.py
 # 2. Pursuit-evasion (multiple moving goals on MovingAI map)
 python run_pursuit_evasion.py
 
-# 3. Two-population game (coupled swarms with distinct goals)
+# 3. Two-population game (coupled crowds with distinct goals)
 python run_2pop.py
 ```
 
@@ -251,7 +251,7 @@ The evader moves **directly away from the weighted center of mass** of nearby pu
 
 A rigorous **Major-Minor Mean Field Game** formulation (not currently implemented) would include:
 
-- **Evader cost functional**: Minimize cumulative exposure to swarm + control effort penalty
+- **Evader cost functional**: Minimize cumulative exposure to crowd dyanics + control effort penalty
 - **Pontryagin's Maximum Principle**: Derive optimal velocity via costate (adjoint) equations
 - **Backward-forward coupling**: Costate integrated backward from terminal cost, trajectory forward from initial position
 - **Nash Equilibrium**: Both pursuers and evaders optimally respond to each other
@@ -273,7 +273,7 @@ A rigorous **Major-Minor Mean Field Game** formulation (not currently implemente
 The heuristic model is well-suited for:
 - Qualitative pursuit-evasion scenario exploration
 - Real-time or interactive applications
-- Fast prototyping of swarm behaviors
+- Fast prototyping of crowd dynamics
 
 For safety-critical systems requiring provable optimality or formal game-theoretic guarantees, implementing the full Major-Minor framework (costate equations, terminal costs, Pontryagin's Principle) would be the recommended extension.
 

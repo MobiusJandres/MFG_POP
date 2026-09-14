@@ -1,6 +1,6 @@
 # Core Experiment Metadata
 exp_name: "pursuit_evasion_suite"
-run_name: "multi_target_evasion"
+run_name: "multi_goal_evasion"
 results_dir: "results"
 timezone: "UTC"
 

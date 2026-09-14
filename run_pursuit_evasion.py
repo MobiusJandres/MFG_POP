@@ -3,11 +3,11 @@ Pursuit-Evasion Mean Field Game Simulation Entry Point
 
 This script demonstrates a two-population Mean Field Game (MFG) where pursuers
 and evaders interact with opposing objectives. It showcases heterogeneous agent
-modeling, dynamic target tracking, and congestion-aware crowd dynamics.
+modeling, dynamic goal tracking, and congestion-aware crowd dynamics.
 
 Key MFG Concepts Illustrated:
-    - Pursuit-evasion dynamics: Pursuit swarm minimize distance to evaders, evaders maximize
-    - Heterogeneous targets: Each population type has different v_max (movement capability)
+    - Pursuit-evasion dynamics: Crowd minimize distance to goals, goals maximize distance to crowds
+    - Heterogeneous goals: Each population type has different v_max (movement capability)
     - Coupled HJB-KFP system: Value functions and densities evolve simultaneously
     - Obstacle-aware navigation: Negative obstacle penalties create repulsion barriers
     - Congestion effects: Agent density influences optimal control via Hamiltonian
@@ -58,10 +58,10 @@ def main():
             use positive penalties). More negative = stronger avoidance.
 
         running_cost_weight (float): Scales the congestion/running cost term in the
-            Hamiltonian. Smaller values (0.01-0.05) prioritize reaching targets quickly;
+            Hamiltonian. Smaller values (0.01-0.05) prioritize reaching goals quickly;
             larger values emphasize avoiding crowded regions.
 
-        goals (list): Heterogeneous target dictionaries with 'type' (pursuer/evader),
+        goals (list): Heterogeneous goals dictionaries with 'type' (pursuer/evader),
             'position' ([x, y]), and 'v_max' (max velocity). Pursuers track evaders;
             evaders maximize distance to pursuers.
 
@@ -89,13 +89,13 @@ def main():
     options.parser.set_defaults(config='configs/pursuit_evasion.yml')
 
     # Add pursuit-evasion specific arguments
-    options.parser.add_argument('--goals', default=None, nargs='*', help='Target goal dictionaries or coordinates')
+    options.parser.add_argument('--goals', default=None, nargs='*', help='Goal dictionaries or coordinates')
     options.parser.add_argument('--goals_are_exits', action='store_true', default=False, help='If True, goals act as exits')
 
     # Negative obstacle penalty creates repulsion barriers (contrast with positive penalties in traffic scenarios)
     options.parser.add_argument('--obstacle_penalty', type=float, default=-500.0, help='Obstacle cell potential penalty')
 
-    # Running cost balances target-seeking vs congestion-avoidance behavior
+    # Running cost balances goal-seeking vs congestion-avoidance behavior
     options.parser.add_argument('--running_cost_weight', type=float, default=0.01, help='Running cost scaling weight')
 
     args = options.parseArgs()
@@ -108,7 +108,7 @@ def main():
     map_str = str(args.map_file) if getattr(args, 'map_file', None) else None
     scen_str = str(args.scen_file) if getattr(args, 'scen_file', None) else None
 
-    # Parse heterogeneous targets (dictionaries or legacy coordinate lists)
+    # Parse heterogeneous goals (dictionaries or legacy coordinate lists)
     # Goal dictionaries must contain: {'type': 'pursuer'|'evader', 'position': [x,y], 'v_max': float}
     raw_goals = getattr(args, 'goals', None)
     goal_configs = []
@@ -131,7 +131,7 @@ def main():
         Ly=args.room_height,            # Physical domain height (meters)
         Nx=args.Nx,                     # Spatial grid resolution (x-direction)
         Ny=args.Ny,                     # Spatial grid resolution (y-direction)
-        custom_goals=goal_configs       # Heterogeneous population targets
+        custom_goals=goal_configs       # Heterogeneous population goals
     )
     pde_mesh.parse_files(num_agents=args.num_agents)  # Load map/scenario data
     pde_mesh.build_spatial_mesh()                      # Discretize continuous domain
@@ -145,7 +145,7 @@ def main():
         T=args.T,                                            # Time horizon (seconds)
         Nt=args.Nt,                                          # Number of time steps
         thetaUM=args.relaxation_theta,                       # Picard relaxation (0 < theta < 1)
-        goal_configs=goal_configs,                           # Heterogeneous population targets
+        goal_configs=goal_configs,                           # Heterogeneous population goals
         goals_are_exits=args.goals_are_exits,                # Exit mode vs potential well mode
         obstacle_penalty=args.obstacle_penalty,              # Negative for repulsion barriers
         running_cost_weight=args.running_cost_weight,        # Congestion sensitivity scaling

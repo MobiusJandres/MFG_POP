@@ -16,7 +16,7 @@ Each solver solves a coupled system of PDEs via Picard iteration:
 - Kolmogorov-Fokker-Planck (KFP) equation: Forward in time, evolves population density (m)
 
 MFGSolver consolidates time-stepping loops for both static exit doors
-and dynamic target goals into a unified execution path. The Picard iteration alternates
+and dynamic goals into a unified execution path. The Picard iteration alternates
 between solving HJB given density m, then solving KFP given value u, with under-relaxation
 (thetaUM parameter) to stabilize convergence.
 
@@ -49,9 +49,9 @@ class MFGSolver:
     """
     Mean Field Game solver for single-population systems with goal-seeking behavior.
 
-    This solver handles drone swarms navigating toward static, dynamic, or capacity-constrained
+    This solver handles crowds navigating toward static, dynamic, or capacity-constrained
     goals in a 2D spatial domain with obstacles. It handles static exit locations,
-    moving doors, reactive target goals, and finite-capacity landing platforms.
+    moving doors, reactive goals, and finite-capacity landing platforms.
 
     Attributes:
         pde_mesh (PDEMeshData): Spatial mesh containing geometry, obstacles, and initial conditions
@@ -71,7 +71,7 @@ class MFGSolver:
         m0 (ndarray): Initial density distribution (Nx, Ny)
         M (ndarray): Density trajectory (Nt+1, Nx, Ny) - solution to KFP equation
         U (ndarray): Value function trajectory (Nt+1, Nx, Ny) - solution to HJB equation
-        goal (Goal|None): Goal/target object managing dynamic goal trajectories and capacities
+        goal (Goal|None): Goal object managing dynamic goal trajectories and capacities
         door_mask (ndarray): Consolidated time-dependent exit/goal mask (Nt+1, Nx, Ny)
         door_mask_3d (ndarray): Property alias for backward compatibility with MFGPlotter
     """
@@ -154,12 +154,9 @@ class MFGSolver:
                 Ly=self.Ly,
                 goals_are_exits_default=self.goals_are_exits
             )
-            # # Alias for backward compatibility with MFGPlotter
-            # self.evader_swarm = self.goal
             self.door_mask = self._build_dynamic_goal_doors(self.goal.Y_trajectories)
         else:
             self.goal = None
-            self.evader_swarm = None
             if initial_door_mask is not None:
                 self.door_mask = initial_door_mask
             else:
@@ -221,8 +218,8 @@ class MFGSolver:
         """
         Compute distance-based running cost to nearest goal at timestep k, accounting for capacity.
 
-        The running cost penalizes distance from goals, incentivizing the swarm to
-        move toward targets. If finite capacity constraints exist, effective distance is
+        The running cost penalizes distance from goals, incentivizing the crowd to
+        move toward goals. If finite capacity constraints exist, effective distance is
         scaled up as the goal fills (dist^2 / weight). Once fully saturated (weight = 0),
         the goal is assigned an infinite distance penalty and excluded from attracting agents.
 
@@ -460,8 +457,8 @@ class MFG2PopSolver:
 
     This solver handles competitive or cooperative scenarios with two distinct populations,
     each solving its own HJB-KFP system while being influenced by the other population's
-    density distribution. Examples: pursuit-evasion with two swarms, competing crowds
-    navigating toward different exits, or cooperative swarms with different objectives.
+    density distribution. Examples: pursuit-evasion with two crowds, competing crowds
+    navigating toward different exits, or cooperative crowds with different objectives.
 
     The key difference from single-population MFG is that each population's Hamiltonian
     depends on both its own density and the other population's density, creating a coupled

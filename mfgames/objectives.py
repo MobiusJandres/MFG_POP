@@ -2,19 +2,19 @@
 Goal management module supporting stationary goals, prescribed paths, evasive goals,
 and capacity-constrained landing platforms / exit goals.
 
-This module implements target/goal dynamics for Mean Field Games simulations,
+This module implements goal dynamics for Mean Field Games simulations,
 supporting four primary operational behaviors:
-1. Stationary: Fixed position targets (e.g., exit doors, static landing pads)
+1. Stationary: Fixed position goals (e.g., exit doors, static or mobile landing pads)
 2. Prescribed: Time-dependent parametric trajectories (e.g., moving obstacles/platforms)
-3. Evader: Dynamically reactive goals that move away from swarm density using
+3. Evader: Dynamically reactive goals that move away from crowd density using
    repulsive force fields (implements evasion game dynamics)
 4. Capacity-Constrained: Exit goals or landing platforms with maximum mass ceilings
    that saturate and deactivate after absorbing a specified cumulative density threshold.
-   Once saturated, moving targets freeze permanently at their saturation location.
+   Once saturated, moving goals freeze permanently at their saturation location.
 
 The evasive goal dynamics use a continuous repulsive potential field computed from
-the swarm density distribution M(x,y,t), enabling adversarial game scenarios where
-goals actively avoid the pursuing swarm.
+the crowd density distribution M(x,y,t), enabling adversarial game scenarios where
+goals actively avoid the pursuing crowd.
 """
 import numpy as np
 
@@ -67,16 +67,16 @@ class Goal:
     This class handles all goal dynamics in the Mean Field Games framework, supporting
     four operational modes:
 
-    1. **Stationary goals**: Fixed spatial targets (e.g., exit doors, static pads)
+    1. **Stationary goals**: Fixed spatial goals (e.g., exit doors, static pads)
        - Position remains constant: Y(t) = Y₀ for all t
        - Defines Dirichlet boundary conditions for value function u
 
     2. **Prescribed goals**: Deterministic time-dependent trajectories
        - Position follows analytical expressions: Y(t) = [x(t), y(t)]
-       - Useful for modeling moving obstacles or predictable targets
+       - Useful for modeling moving obstacles or predictable goals
 
-    3. **Evader goals**: Dynamically reactive targets using repulsive force fields
-       - Velocity computed from swarm density M(x,y,t) via inverse-square repulsion
+    3. **Evader goals**: Dynamically reactive goals using repulsive force fields
+       - Velocity computed from crowd density M(x,y,t) via inverse-square repulsion
        - Implements evasion game: dY/dt = v_max * ∇Φ(Y, M) where Φ is repulsive potential
        - Maximum speed constraint v_max enforces bounded evasion capability
 
@@ -84,7 +84,7 @@ class Goal:
        - Stores finite capacity limit C_max (cumulative density units allowed)
        - Automatically saturates once total absorbed mass reaches C_max
        - Deactivates exit Dirichlet conditions or attenuates HJB attraction cost
-       - Freezes target position at the saturation location upon reaching C_max
+       - Freezes goal position at the saturation location upon reaching C_max
 
     Attributes:
         Nt (int): Number of time steps in simulation
@@ -218,7 +218,7 @@ class Goal:
 
         This property determines whether the MFG solver needs to use the full iterative
         update scheme (Picard iteration with goal position updates) or can use a simpler
-        fixed-target solver.
+        fixed-goal solver.
 
         Returns:
             bool: True if any goal is type 'evader' or 'prescribed', False if all stationary
@@ -241,10 +241,10 @@ class Goal:
 
     def update_positions(self, M_field, omask, Dx, Dy, Lx, Ly, goals_are_exits_default=False):
         """
-        Update goal trajectories based on swarm density field for evader-type goals.
+        Update goal trajectories based on crowd density field for evader-type goals.
 
         Implements the evasion dynamics for reactive goals using repulsive force fields
-        computed from the swarm density distribution M(x,y,t). The evader velocity at
+        computed from the crowd density distribution M(x,y,t). The evader velocity at
         position Y is computed as:
 
             F(Y) = ∫∫ (Y - x) / |Y - x|² M(x,y) dx dy   (repulsive force field)
@@ -252,10 +252,10 @@ class Goal:
             Y(t+Δt) = Y(t) + v(Y) Δt                    (forward Euler integration)
         
         This implements a greedy evasion strategy where goals move directly away from
-        the center of mass of nearby swarm density with bounded maximum speed.
+        the center of mass of nearby crowd density with bounded maximum speed.
 
         Args:
-            M_field (ndarray): Swarm density field, shape (Nt+1, Nx, Ny)
+            M_field (ndarray): Crowd density field, shape (Nt+1, Nx, Ny)
                                Mass distribution M(x,y,t) from KFP solution
             omask (ndarray): Obstacle mask, shape (Nx, Ny)
                              1 = walkable, 0 = obstacle (blocks evader motion)
@@ -289,7 +289,7 @@ class Goal:
 
         # Time-step loop: update all goals from time k to k+1
         for k in range(self.Nt + 1):
-            M_k = M_field[k]  # Swarm density at current time step
+            M_k = M_field[k]  # Crowd density at current time step
             total_mass = np.sum(M_k)  # Total mass for zero-density check
 
             for g, g_info in enumerate(self.goals):

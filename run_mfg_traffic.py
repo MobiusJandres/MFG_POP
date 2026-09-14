@@ -14,7 +14,7 @@ Key MFG Concepts Illustrated:
   in time for population density m(x,t).
 - **Picard Iteration**: Iteratively couples HJB and KFP solutions until convergence,
   producing Nash equilibrium strategies for the mean field game.
-- **Moving Targets**: Supports time-varying exit door positions (e.g., closing/opening doors).
+- **Moving Exits**: Supports time-varying exit door positions (e.g., closing/opening doors).
 - **Obstacle Avoidance**: Positive obstacle penalty (default +500) creates repulsive
   potential that guides agents around walls and barriers.
 
@@ -71,7 +71,7 @@ from args.Options import Options
 # Spatial discretization: mesh construction, obstacle masks, and door boundary conditions
 from mfgames.geometry import (
     MFGTrafficGeometry,              # 2D spatial mesh with obstacle support
-    create_moving_door_mask,         # Time-varying exit door masks for moving targets
+    create_moving_door_mask,         # Time-varying exit door masks for moving exits
     build_door_trajectories_from_config,  # Parse door configs into trajectories
 )
 

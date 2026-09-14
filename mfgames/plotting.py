@@ -1,5 +1,5 @@
 """
-Unified Plotting, RGB multi-swarm compositing, and video creation utilities.
+Unified Plotting, RGB multi-crowd compositing, and video creation utilities.
 
 This module provides visualization tools for Mean Field Games (MFG) simulations,
 including density evolution (m) and value function (u) from the coupled HJB-KFP
@@ -223,7 +223,7 @@ class MFGPlotter:
         self.U2 = getattr(solver_instance, 'U2', None)
 
         # Goal manager and trajectory tracking
-        # self.goal_instance = getattr(solver_instance, 'goal', getattr(solver_instance, 'evader_swarm', None))
+        # self.goal_instance = getattr(solver_instance, 'goal', getattr(solver_instance, 'evader_crowd', None))
         self.goal_instance = getattr(solver_instance, 'goal', None)
         self.evader_trajectories = getattr(self.goal_instance, 'Y_trajectories', None)
 
@@ -279,7 +279,7 @@ class MFGPlotter:
 
     def _draw_goals(self, ax, t_idx=0):
         """
-        Draws static goals, dynamic door outlines, or evader targets on the axis.
+        Draws static goals, dynamic door outlines, or goals on the axis.
 
         Conditional rendering based on scenario type: evader trajectories for pursuit-
         evasion, static goal markers for 1/2-population, or time-dependent door contours.

@@ -16,7 +16,7 @@ keywords = [
     "mean-field-games", 
     "pde", 
     "optimal-control", 
-    "drone-swarm", 
+    "crowd-dynamics", 
     "pursuit-evasion", 
     "numba"
 ]

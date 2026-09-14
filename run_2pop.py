@@ -122,9 +122,9 @@ def main():
           Format: [[x, y, sigma, amplitude], ...]
           Default: Pop1 at (400, 575), Pop2 at (400, 175)
 
-        - pop1_goals, pop2_goals: Target locations for each population
+        - pop1_goals, pop2_goals: Goal locations for each population
           Format: [[x, y], ...]
-          Default: Pop1 has no explicit goals (free movement), Pop2 targets (400, 700)
+          Default: Pop1 has no explicit goals (free movement), Pop2 goals (400, 700)
 
     Output Files:
         - save_dir: Base directory for all outputs (default: output/2pop/)
@@ -244,7 +244,7 @@ def main():
     # ========================================================================
     # STEP 4: Goal Location Configuration
     # ========================================================================
-    # Define target locations for each population. Goals affect the terminal cost
+    # Define goal locations for each population. Goals affect the terminal cost
     # in the value function (HJB equation) and bias agent movement trajectories.
     #
     # Default configuration for pursuit-evasion:

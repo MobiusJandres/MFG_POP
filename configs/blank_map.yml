@@ -1,0 +1,58 @@
+# Core Experiment Metadata
+exp_name: "pursuit_evasion_suite"
+run_name: "multi_goal_evasion"
+results_dir: "results"
+timezone: "UTC"
+
+# Environment & Grid Setup
+map_file: "Maps/empty_768x768.map"
+scen_file: "Scenarios/empty_768x768.map.scen"
+room_width: 768.0
+room_height: 768.0
+Nx: 100
+Ny: 100
+num_agents: 50
+
+# Behavior Settings
+goals_are_exits: true # Set to true if you want mass to exit at goals
+obstacle_penalty: -50000.0
+running_cost_weight: 0.01
+saturated_goal_penalty: -5000
+
+# Time & Solver Parameters
+T: 10.0
+Nt: 300
+max_iters: 15
+relaxation_theta: 0.1
+
+# Heterogeneous Goal Dictionaries
+goals:
+  - type: "evader"
+    position: [100, 700.0]
+    v_max: 10.0
+    capacity: 30
+
+  - type: "evader"
+    position: [700.0, 700.0]
+    capacity: 25
+    v_max: 10.0
+
+  - type: "evader"
+    position: [384.0, 100.0]
+    v_max: 10.0
+    capacity: 25.0
+  
+  - type: "evader"
+    position: [100.0, 350.0]
+    v_max: 5.0
+    capacity: 10.0
+
+  - type: "evader"
+    position: [350.0, 350.0]
+    v_max: 15.0
+    capacity: 20.0
+
+  - type: "evader"
+    position: [150, 150.0]
+    v_max: 15.0
+    capacity: 20

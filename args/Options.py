@@ -4,7 +4,7 @@ Universal command-line argument parser for all project scripts.
 import argparse
 import logging
 from pathlib import Path
-from yaml import safe_load
+import yaml
 from mfgames.time import fancy_timestamp
 
 
@@ -36,8 +36,14 @@ class Options:
         self.parser.add_argument('--max_iters', default=10, type=int, help='Maximum Picard relaxation iterations.')
         self.parser.add_argument('--relaxation_theta', default=0.1, type=float, help='Picard under-relaxation parameter.')
 
-        # --- Evader Dynamics ---
-        self.parser.add_argument('--v_max_evader', default=15.0, type=float, help='Evader maximum speed limit (m/s).')
+        # --- Goal Dynamics ---
+        self.parser.add_argument('--v_max_evader', default=15.0, type=float, help='Default goal maximum speed limit (m/s).')
+        self.parser.add_argument(
+            '--saturated_goal_penalty', 
+            default=0.0, 
+            type=float, 
+            help='Repulsive cost weight added around saturated goals (0.0 disables penalty).'
+)
 
         self._paths = ['config', 'map_file', 'scen_file', 'results_dir']
 
@@ -50,7 +56,7 @@ class Options:
 
         try:
             with open(config_path, 'r') as file:
-                settings = safe_load(file) or {}
+                settings = yaml.safe_load(file) or {}
 
             for key, value in settings.items():
                 if hasattr(self.args, key):
@@ -79,6 +85,27 @@ class Options:
                 if path_str is not None:
                     setattr(self.args, arg_key, Path(path_str).absolute())
 
+    def _save_config(self) -> None:
+        """
+        Saves the fully resolved experiment configuration dictionary to config.yml in save_dir.
+        Converts non-YAML-serializable types (such as Path objects) into strings.
+        """
+        config_out_path = self.args.save_dir / "config.yml"
+        
+        config_dict = {}
+        for key, val in vars(self.args).items():
+            if isinstance(val, Path):
+                config_dict[key] = str(val)
+            else:
+                config_dict[key] = val
+
+        try:
+            with open(config_out_path, 'w') as f:
+                yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+            logging.info(f"Saved run configuration to '{config_out_path}'", flush=True)
+        except Exception as e:
+            logging.exception(f"Failed to save configuration file to {config_out_path}: {e}")
+
     def parseArgs(self) -> argparse.Namespace:
         """Parses CLI inputs, applies YAML settings, and generates the output save directory."""
         self.args = self.parser.parse_args()
@@ -98,5 +125,8 @@ class Options:
         else:
             self.args.save_dir = Path.cwd() / "results" / run_identifier
 
+        # Save configuration snapshot into the timestamped results folder
         self.args.save_dir.mkdir(parents=True, exist_ok=True)
+        self._save_config()
+
         return self.args

@@ -6,7 +6,7 @@ and evaders interact with opposing objectives. It showcases heterogeneous agent
 modeling, dynamic goal tracking, and congestion-aware crowd dynamics.
 
 Key MFG Concepts Illustrated:
-    - Pursuit-evasion dynamics: Pursuit swarm minimize distance to evaders, evaders maximize
+    - Pursuit-evasion dynamics: Crowd minimize distance to goals, goals maximize distance to crowds
     - Heterogeneous goals: Each population type has different v_max (movement capability)
     - Coupled HJB-KFP system: Value functions and densities evolve simultaneously
     - Obstacle-aware navigation: Negative obstacle penalties create repulsion barriers
@@ -61,7 +61,7 @@ def main():
             Hamiltonian. Smaller values (0.01-0.05) prioritize reaching goals quickly;
             larger values emphasize avoiding crowded regions.
 
-        goals (list): Heterogeneous goal dictionaries with 'type' (pursuer/evader),
+        goals (list): Heterogeneous goals dictionaries with 'type' (pursuer/evader),
             'position' ([x, y]), and 'v_max' (max velocity). Pursuers track evaders;
             evaders maximize distance to pursuers.
 
@@ -89,7 +89,7 @@ def main():
     options.parser.set_defaults(config='configs/pursuit_evasion.yml')
 
     # Add pursuit-evasion specific arguments
-    options.parser.add_argument('--goals', default=None, nargs='*', help='Goal goal dictionaries or coordinates')
+    options.parser.add_argument('--goals', default=None, nargs='*', help='Goal dictionaries or coordinates')
     options.parser.add_argument('--goals_are_exits', action='store_true', default=False, help='If True, goals act as exits')
 
     # Negative obstacle penalty creates repulsion barriers (contrast with positive penalties in traffic scenarios)
@@ -141,14 +141,15 @@ def main():
     # ============================================================================
     # Initialize MFG solver with mesh, time discretization, and population parameters
     mfg_solver = MFGSolver(
-        pde_mesh_data=pde_mesh,                       # Spatial mesh with obstacles/doors
-        T=args.T,                                     # Time horizon (seconds)
-        Nt=args.Nt,                                   # Number of time steps
-        thetaUM=args.relaxation_theta,                # Picard relaxation (0 < theta < 1)
-        goal_configs=goal_configs,                    # Heterogeneous population goals
-        goals_are_exits=args.goals_are_exits,         # Exit mode vs potential well mode
-        obstacle_penalty=args.obstacle_penalty,       # Negative for repulsion barriers
-        running_cost_weight=args.running_cost_weight  # Congestion sensitivity scaling
+        pde_mesh_data=pde_mesh,                              # Spatial mesh with obstacles/doors
+        T=args.T,                                            # Time horizon (seconds)
+        Nt=args.Nt,                                          # Number of time steps
+        thetaUM=args.relaxation_theta,                       # Picard relaxation (0 < theta < 1)
+        goal_configs=goal_configs,                           # Heterogeneous population goals
+        goals_are_exits=args.goals_are_exits,                # Exit mode vs potential well mode
+        obstacle_penalty=args.obstacle_penalty,              # Negative for repulsion barriers
+        running_cost_weight=args.running_cost_weight,        # Congestion sensitivity scaling
+        saturated_goal_penalty=args.saturated_goal_penalty,  # Saturated goal repulsion penalty
     )
 
     # ============================================================================

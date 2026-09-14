@@ -1,16 +1,20 @@
 """
-Goal management module supporting stationary goals, prescribed paths, and evasive goals.
+Goal management module supporting stationary goals, prescribed paths, evasive goals,
+and capacity-constrained landing platforms / exit goals.
 
-This module implements the goal dynamics for Mean Field Games simulations,
-supporting three types of goal behavior:
-1. Stationary: Fixed position goals (e.g., exit doors)
-2. Prescribed: Time-dependent parametric trajectories (e.g., moving obstacles)
-3. Evader: Dynamically reactive goals that move away from swarm density using
+This module implements goal dynamics for Mean Field Games simulations,
+supporting four primary operational behaviors:
+1. Stationary: Fixed position goals (e.g., exit doors, static or mobile landing pads)
+2. Prescribed: Time-dependent parametric trajectories (e.g., moving obstacles/platforms)
+3. Evader: Dynamically reactive goals that move away from crowd density using
    repulsive force fields (implements evasion game dynamics)
+4. Capacity-Constrained: Exit goals or landing platforms with maximum mass ceilings
+   that saturate and deactivate after absorbing a specified cumulative density threshold.
+   Once saturated, moving goals freeze permanently at their saturation location.
 
 The evasive goal dynamics use a continuous repulsive potential field computed from
-the swarm density distribution M(x,y,t), enabling adversarial game scenarios where
-goals actively avoid the pursuing swarm.
+the crowd density distribution M(x,y,t), enabling adversarial game scenarios where
+goals actively avoid the pursuing crowd.
 """
 import numpy as np
 
@@ -48,8 +52,8 @@ def eval_motion_expr(expr_str, t, T_final, room_size, default_val):
         'sin': np.sin,
         'cos': np.cos,
         'pi': np.pi,
-        't': float(t),        # Current time
-        'T': float(T_final),  # Total simulation time
+        't': float(t),         # Current time
+        'T': float(T_final),   # Total simulation time
         'L': float(room_size), # Domain dimension for normalization
     }
     return float(eval(str(expr_str), {"__builtins__": None}, eval_env))
@@ -57,12 +61,13 @@ def eval_motion_expr(expr_str, t, T_final, room_size, default_val):
 
 class Goal:
     """
-    Manages system goals (stationary positions, prescribed trajectories, or evasive goals).
+    Manages system goals (stationary positions, prescribed trajectories, evasive goals,
+    and capacity-constrained exit goals / mobile landing platforms).
 
     This class handles all goal dynamics in the Mean Field Games framework, supporting
-    three operational modes:
+    four operational modes:
 
-    1. **Stationary goals**: Fixed spatial goals (e.g., exit doors, destinations)
+    1. **Stationary goals**: Fixed spatial goals (e.g., exit doors, static pads)
        - Position remains constant: Y(t) = Y₀ for all t
        - Defines Dirichlet boundary conditions for value function u
 
@@ -71,12 +76,15 @@ class Goal:
        - Useful for modeling moving obstacles or predictable goals
 
     3. **Evader goals**: Dynamically reactive goals using repulsive force fields
-       - Velocity computed from swarm density M(x,y,t) via inverse-square repulsion
+       - Velocity computed from crowd density M(x,y,t) via inverse-square repulsion
        - Implements evasion game: dY/dt = v_max * ∇Φ(Y, M) where Φ is repulsive potential
        - Maximum speed constraint v_max enforces bounded evasion capability
 
-    The class precomputes trajectories for stationary/prescribed goals during initialization,
-    then updates evader trajectories iteratively during simulation via update_positions().
+    4. **Capacity-Constrained goals**: Mobile or static landing pads with maximum mass ceilings
+       - Stores finite capacity limit C_max (cumulative density units allowed)
+       - Automatically saturates once total absorbed mass reaches C_max
+       - Deactivates exit Dirichlet conditions or attenuates HJB attraction cost
+       - Freezes goal position at the saturation location upon reaching C_max
 
     Attributes:
         Nt (int): Number of time steps in simulation
@@ -89,11 +97,23 @@ class Goal:
             - 'position': [x, y] initial position
             - 'v_max': Maximum speed for evaders (m/s)
             - 'path_x', 'path_y': Expression strings for prescribed paths
+            - 'capacity': Maximum cumulative mass ceiling (float, default inf)
+            - 'is_exit': Whether goal acts as mass-absorbing exit (bool)
         num_goals (int): Total number of goals
+        capacities (list[float]): Array of capacity limits per goal
         Y_trajectories (ndarray): Shape (Nt+1, num_goals, 2) position history [x, y]
     """
 
-    def __init__(self, goal_configs: list, Nt: int, Dt: float, T: float = 3.0, Lx: float = 768.0, Ly: float = 768.0):
+    def __init__(
+        self,
+        goal_configs: list,
+        Nt: int,
+        Dt: float,
+        T: float = 3.0,
+        Lx: float = 768.0,
+        Ly: float = 768.0,
+        goals_are_exits_default: bool = False
+    ):
         """
         Initialize goal manager with configuration and temporal discretization.
 
@@ -106,6 +126,8 @@ class Goal:
                     - 'v_max': Maximum evasion speed in m/s (default 15.0, evaders only)
                     - 'path_x': Expression for prescribed x(t) (prescribed goals only)
                     - 'path_y': Expression for prescribed y(t) (prescribed goals only)
+                    - 'capacity': Maximum cumulative density threshold (default inf)
+                    - 'is_exit': Whether goal absorbs mass via Dirichlet BC (default False)
             Nt (int): Number of temporal discretization steps
             Dt (float): Time step size in seconds
             T (float): Total simulation time in seconds (default 3.0)
@@ -121,18 +143,37 @@ class Goal:
         self.Lx, self.Ly = Lx, Ly
         self.goals = []
 
-        # Parse and normalize goal configurations into standardized dict format
         for cfg in goal_configs:
             if isinstance(cfg, (list, tuple)):
-                cfg_dict = {'type': 'evader', 'position': [float(cfg[0]), float(cfg[1])], 'v_max': 15.0}
+                cfg_dict = {
+                    'type': 'evader',
+                    'position': [float(cfg[0]), float(cfg[1])],
+                    'v_max': 15.0,
+                    'capacity': float('inf'),
+                    'is_exit': False
+                }
             elif isinstance(cfg, dict):
                 pos = cfg.get('position', [0.0, 0.0])
+                cap = float(cfg.get('capacity', float('inf')))
+
+                # 1. Explicit 'is_exit' key in dict takes precedence
+                # 2. If capacity is finite, automatically treat goal as an exit (is_exit = True)
+                # 3. Otherwise default to goals_are_exits_default
+                if 'is_exit' in cfg:
+                    is_exit = bool(cfg['is_exit'])
+                elif np.isfinite(cap):
+                    is_exit = True
+                else:
+                    is_exit = goals_are_exits_default
+
                 cfg_dict = {
                     'type': str(cfg.get('type', 'evader')).lower(),
                     'position': [float(pos[0]), float(pos[1])],
                     'v_max': float(cfg.get('v_max', 15.0)),
                     'path_x': cfg.get('path_x', None),
-                    'path_y': cfg.get('path_y', None)
+                    'path_y': cfg.get('path_y', None),
+                    'capacity': cap,
+                    'is_exit': is_exit
                 }
             else:
                 raise ValueError(f"Invalid goal configuration format: {cfg}")
@@ -140,7 +181,11 @@ class Goal:
             self.goals.append(cfg_dict)
 
         self.num_goals = len(self.goals)
+        self.capacities = [g['capacity'] for g in self.goals]
         self.Y_trajectories = np.zeros((Nt + 1, self.num_goals, 2))
+        # Single source of truth for saturation state across time steps and goals
+        self.is_saturated = np.zeros((Nt + 1, self.num_goals), dtype=bool)
+        self.saturation_steps = np.full(self.num_goals, Nt + 1, dtype=int)
 
         # Precompute trajectories for deterministic goal types (stationary and prescribed)
         # Evader trajectories are initialized but will be updated dynamically via update_positions()
@@ -150,7 +195,6 @@ class Goal:
             self.Y_trajectories[0, g_idx, :] = init_pos
 
             if g_info['type'] == 'stationary':
-                # Replicate initial position for all time steps
                 for k in range(1, Nt + 1):
                     self.Y_trajectories[k, g_idx, :] = init_pos
 
@@ -178,33 +222,43 @@ class Goal:
 
         Returns:
             bool: True if any goal is type 'evader' or 'prescribed', False if all stationary
-
+        
         Notes:
             - Stationary goals → can solve HJB-KFP system once with fixed boundary conditions
             - Dynamic goals → require outer loop updating goal positions Y(t) and re-solving
         """
         return any(g['type'] in ('evader', 'prescribed') for g in self.goals)
 
-    def update_positions(self, M_field, omask, Dx, Dy, Lx, Ly):
+    @property
+    def has_capacity_limits(self) -> bool:
         """
-        Update goal trajectories based on swarm density field for evader-type goals.
+        Check if any goals have finite capacity limits requiring mass accumulation tracking.
+
+        Returns:
+            bool: True if any goal has a finite capacity threshold, False if all infinite
+        """
+        return any(np.isfinite(c) for c in self.capacities)
+
+    def update_positions(self, M_field, omask, Dx, Dy, Lx, Ly, goals_are_exits_default=False):
+        """
+        Update goal trajectories based on crowd density field for evader-type goals.
 
         Implements the evasion dynamics for reactive goals using repulsive force fields
-        computed from the swarm density distribution M(x,y,t). The evader velocity at
+        computed from the crowd density distribution M(x,y,t). The evader velocity at
         position Y is computed as:
 
             F(Y) = ∫∫ (Y - x) / |Y - x|² M(x,y) dx dy   (repulsive force field)
             v(Y) = v_max * F(Y) / |F(Y)|                (normalized to max speed)
             Y(t+Δt) = Y(t) + v(Y) Δt                    (forward Euler integration)
-
+        
         This implements a greedy evasion strategy where goals move directly away from
-        the center of mass of nearby swarm density with bounded maximum speed.
+        the center of mass of nearby crowd density with bounded maximum speed.
 
         Args:
-            M_field (ndarray): Swarm density field, shape (Nt+1, Nx, Ny)
-                              Mass distribution M(x,y,t) from KFP solution
+            M_field (ndarray): Crowd density field, shape (Nt+1, Nx, Ny)
+                               Mass distribution M(x,y,t) from KFP solution
             omask (ndarray): Obstacle mask, shape (Nx, Ny)
-                            1 = walkable, 0 = obstacle (blocks evader motion)
+                             1 = walkable, 0 = obstacle (blocks evader motion)
             Dx (float): Spatial step size in x direction (meters)
             Dy (float): Spatial step size in y direction (meters)
             Lx (float): Domain width (meters)
@@ -212,14 +266,13 @@ class Goal:
 
         Returns:
             ndarray: Updated trajectory array, shape (Nt+1, num_goals, 2)
-                    New positions Y(t) for all goals and all time steps
-
+        
         Notes:
             - Stationary goals: Position copied from initial state
             - Prescribed goals: Position copied from precomputed trajectory
             - Evader goals: Position updated via repulsive force field integration
             - Collision detection: Goals cannot move into obstacle cells (omask == 0)
-            - Regularization: Distance denominator includes +1e-3 to prevent singularities
+            - Regularization: Distance denominator includes +1e-3 to prevent singularities        
         """
         Nx, Ny = omask.shape
         new_trajectories = np.copy(self.Y_trajectories)
@@ -230,63 +283,87 @@ class Goal:
         y_coords = np.linspace(Dy / 2, Ly - Dy / 2, Ny)
         X_grid, Y_grid = np.meshgrid(x_coords, y_coords, indexing='ij')
 
+        cumulative_mass = np.zeros(self.num_goals)
+        self.is_saturated.fill(False)
+        self.saturation_steps.fill(self.Nt + 1)
+
         # Time-step loop: update all goals from time k to k+1
-        for k in range(self.Nt):
-            M_k = M_field[k]  # Swarm density at current time step
+        for k in range(self.Nt + 1):
+            M_k = M_field[k]  # Crowd density at current time step
             total_mass = np.sum(M_k)  # Total mass for zero-density check
 
             for g, g_info in enumerate(self.goals):
-                if g_info['type'] == 'stationary':
-                    # Copy initial position (no motion)
-                    new_trajectories[k + 1, g] = self.Y_trajectories[0, g]
+                cap = g_info.get('capacity', float('inf'))
+                is_exit = g_info.get('is_exit', goals_are_exits_default)
+                curr_x, curr_y = new_trajectories[k, g]
 
-                elif g_info['type'] == 'prescribed':
-                    # Copy precomputed trajectory position
-                    new_trajectories[k + 1, g] = self.Y_trajectories[k + 1, g]
+                # Saturation feature applies to exit goals with finite capacity
+                if is_exit and np.isfinite(cap):
+                    if k > 0 and self.is_saturated[k - 1, g]:
+                        self.is_saturated[k:, g] = True
+                        if k < self.Nt:
+                            new_trajectories[k + 1:, g] = [curr_x, curr_y]
+                        continue
 
-                elif g_info['type'] == 'evader':
-                    curr_x, curr_y = new_trajectories[k, g]
-                    v_max = g_info['v_max']
+                    region = (np.abs(X_grid - curr_x) <= Dx) & (np.abs(Y_grid - curr_y) <= Dy)
+                    mass_exiting_at_k = np.sum(M_k[region]) * Dx * Dy
+                    cumulative_mass[g] += mass_exiting_at_k
 
-                    # Compute repulsive force field from swarm density
-                    if total_mass > 1e-6:
-                        # Vector from each grid cell to evader position
-                        rx = curr_x - X_grid
-                        ry = curr_y - Y_grid
+                    # If capacity ceiling is reached, freeze goal permanently at current location
+                    if cumulative_mass[g] >= cap:
+                        self.is_saturated[k:, g] = True
+                        if self.saturation_steps[g] > k:
+                            self.saturation_steps[g] = k
+                        if k < self.Nt:
+                            new_trajectories[k + 1:, g] = [curr_x, curr_y]
+                        continue
 
-                        # Squared distance with regularization to prevent division by zero
-                        # Uses 1/r² repulsion law (Coulomb-like potential)
-                        dist_sq = rx**2 + ry**2 + 1e-3
+                if k < self.Nt:
+                    if g_info['type'] == 'stationary':
+                        new_trajectories[k + 1, g] = self.Y_trajectories[0, g]
 
-                        # Integrate force contributions: F = Σ M(x) * (Y-x) / |Y-x|²
-                        # This is discrete approximation of ∫∫ M(x) (Y-x)/|Y-x|² dx dy
-                        force_x = np.sum((rx / dist_sq) * M_k)
-                        force_y = np.sum((ry / dist_sq) * M_k)
-                        norm_force = np.sqrt(force_x**2 + force_y**2)
+                    elif g_info['type'] == 'prescribed':
+                        # Unsaturated prescribed goal follows analytical parametric path
+                        x_expr, y_expr = g_info['path_x'], g_info['path_y']
+                        t_next = (k + 1) * self.Dt
+                        px = eval_motion_expr(x_expr, t_next, self.T, Lx, self.Y_trajectories[0, g, 0])
+                        py = eval_motion_expr(y_expr, t_next, self.T, Ly, self.Y_trajectories[0, g, 1])
+                        new_trajectories[k + 1, g] = [px, py]
 
-                        # Normalize to maximum speed: v = v_max * F / |F|
-                        if norm_force > 1e-8:
-                            vx = (force_x / norm_force) * v_max
-                            vy = (force_y / norm_force) * v_max
+                    elif g_info['type'] == 'evader':
+                        v_max = g_info['v_max']
+
+                        if total_mass > 1e-6:
+                            rx = curr_x - X_grid
+                            ry = curr_y - Y_grid
+                            dist_sq = rx**2 + ry**2 + 1e-3
+
+                            force_x = np.sum((rx / dist_sq) * M_k)
+                            force_y = np.sum((ry / dist_sq) * M_k)
+                            norm_force = np.sqrt(force_x**2 + force_y**2)
+
+                            if norm_force > 1e-8:
+                                vx = (force_x / norm_force) * v_max
+                                vy = (force_y / norm_force) * v_max
+                            else:
+                                vx, vy = 0.0, 0.0
                         else:
-                            vx, vy = 0.0, 0.0  # No force → stationary
-                    else:
-                        vx, vy = 0.0, 0.0  # No swarm mass → stationary
+                            vx, vy = 0.0, 0.0
 
-                    # Forward Euler integration: Y(t+Δt) = Y(t) + v·Δt
-                    # Clip to domain boundaries [Dx, L-Dx] to stay within valid region
-                    next_x = np.clip(curr_x + vx * self.Dt, Dx, Lx - Dx)
-                    next_y = np.clip(curr_y + vy * self.Dt, Dy, Ly - Dy)
+                        # Forward Euler integration: Y(t+Δt) = Y(t) + v·Δt
+                        # Clip to domain boundaries [Dx, L-Dx] to stay within valid region
+                        next_x = np.clip(curr_x + vx * self.Dt, Dx, Lx - Dx)
+                        next_y = np.clip(curr_y + vy * self.Dt, Dy, Ly - Dy)
 
-                    # Collision detection: check if proposed position is walkable
-                    next_i = int(np.clip(next_x / Dx, 0, Nx - 1))
-                    next_j = int(np.clip(next_y / Dy, 0, Ny - 1))
+                        # Collision detection: check if proposed position is walkable
+                        next_i = int(np.clip(next_x / Dx, 0, Nx - 1))
+                        next_j = int(np.clip(next_y / Dy, 0, Ny - 1))
 
-                    if omask[next_i, next_j] == 1:
-                        # Cell is walkable → accept new position
-                        new_trajectories[k + 1, g] = [next_x, next_y]
-                    else:
-                        # Cell is obstacle → reject motion, stay at current position
-                        new_trajectories[k + 1, g] = [curr_x, curr_y]
+                        if omask[next_i, next_j] == 1:
+                            # Cell is walkable → accept new position
+                            new_trajectories[k + 1, g] = [next_x, next_y]
+                        else:
+                            # Cell is obstacle → reject motion, stay at current position
+                            new_trajectories[k + 1, g] = [curr_x, curr_y]
 
         return new_trajectories

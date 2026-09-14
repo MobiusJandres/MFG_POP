@@ -17,6 +17,13 @@ num_agents: 50
 goals_are_exits: false # Set to true if you want mass to exit at goals
 obstacle_penalty: -50000.0
 running_cost_weight: 0.01
+saturated_goal_penalty: 0.0
+
+# Time & Solver Parameters
+T: 5.0
+Nt: 150
+max_iters: 15
+relaxation_theta: 0.1
 
 # Heterogeneous Goal Dictionaries
 goals:
@@ -30,22 +37,13 @@ goals:
 
   - type: "evader"
     position: [100.0, 700.0]
-    v_max: 25.0
+    v_max: 15.0
 
   - type: "evader"
     position: [700.0, 700.0]
-    v_max: 25.0
+    capacity: 3.0
+    v_max: 5
 
   - type: "evader"
     position: [384.0, 100.0]
     v_max: 25.0
-
-# Time & Solver Parameters
-T: 5.0
-Nt: 150
-max_iters: 15
-relaxation_theta: 0.1
-
-# Pursuit-Evasion Dynamics
-v_max_evader: 25.0
-enable_evader_swarm: true

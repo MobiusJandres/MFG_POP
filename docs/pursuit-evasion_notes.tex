@@ -6,9 +6,10 @@
 \usepackage{hyperref}
 \usepackage{cite}
 \usepackage{bm}
+\usepackage{verbatim}
 
-\title{\textbf{A Major-Minor Mean Field Game Heuristics for Crowd Pursuit-Evasion Dynamics}}
-\author{\textbf{Mathematical Formulation \& Algorithmic Resolution}}
+\title{\textbf{A Major-Minor Mean Field Game Framework for Crowd Navigation and Dynamic Goal Evasion}}
+\author{\textbf{Mathematical Formulation, Algorithmic Resolution, \& Code Implementation}}
 \date{\today}
 
 \begin{document}
@@ -16,106 +17,208 @@
 \maketitle
 
 \begin{abstract}
-This document establishes a formal mathematical framework for modeling the interaction between a continuum of minor players (a crowd) and an active, strategic major player (an evading goal) within a bounded spatial domain containing obstacles. The system is formulated as a Major-Minor Pursuit-Evasion Mean Field Game (PE-MFG). We detail the backward Hamilton-Jacobi-Bellman (HJB) equation governing optimal crowd navigation, the forward Kolmogorov-Fokker-Planck (KFP) equation modeling crowd mass transport, and the state-costate differential equations determining the evader's optimal escape trajectory. Finally, an extended damped Picard fixed-point scheme is presented for numerical computation.
+This document establishes a formal mathematical framework for modeling the interaction between a continuum of minor players (a crowd) and dynamic major players (evading or capacity-constrained goals) within a bounded spatial domain containing obstacles. The system is formulated as a Major-Minor Mean Field Game (PE-MFG). We detail the backward Hamilton-Jacobi-Bellman (HJB) equation governing optimal crowd navigation, the forward Kolmogorov-Fokker-Planck (KFP) equation modeling crowd mass transport, the repulsive potential force field governing dynamic evading goals, and the centralized goal capacity saturation scheme. Finally, a damped Picard fixed-point scheme with post-saturation trajectory clamping is presented alongside the corresponding software architecture and code implementation details.
 \end{abstract}
 
 \section{Introduction \& Domain Configuration}
-Let $\Omega \subset \mathbb{R}^2$ be a bounded domain with boundary $\partial\Omega = \Gamma_{\text{wall}} \cup \Gamma_{\text{door}}$, where $\Gamma_{\text{wall}}$ represents solid obstacles enforcing zero-flux Neumann conditions and $\Gamma_{\text{door}}(t)$ denotes time-dependent exit/goal boundaries. We model a time horizon $t \in [0, T]$.
+Let $\Omega \subset \mathbb{R}^2$ be a bounded spatial domain with boundary $\partial\Omega = \Gamma_{\text{wall}} \cup \Gamma_{\text{door}}(t)$, where $\Gamma_{\text{wall}}$ represents solid obstacles enforcing zero-flux Neumann conditions and $\Gamma_{\text{door}}(t)$ denotes time-dependent exit boundaries associated with active goals. The temporal horizon is $t \in [0, T]$.
 
-The system consists of two distinct agent classes:
+The system consists of two agent classes:
 \begin{enumerate}
-    \item \textbf{Minor Players (Crowd):} A continuum of statistically identical agents whose macroscopic spatial density at time $t$ and location $x \in \Omega$ is given by $m(t, x) \ge 0$.
-    \item \textbf{Major Player (Evader/Goal):} A single dominant agent located at position $y(t) \in \Omega$, actively adjusting its velocity $a(t) \in \mathbb{R}^2$ to escape the approaching crowd.
+    \item \textbf{Minor Players (Crowd):} A continuum of statistically identical agents whose macroscopic spatial density at time $t$ and location $x \in \Omega$ is denoted by $m(t, x) \ge 0$.
+    \item \textbf{Major Players (Goals):} A discrete collection of $G$ goal objects $\{y_g(t)\}_{g=1}^G \subset \Omega$. Goals can be stationary landing pads, prescribed parametric trajectories, or reactive evading goals that actively flee from crowd density. Goals may also possess finite mass capacity ceilings $C_{\text{max}, g}$.
 \end{enumerate}
 
 \section{Minor Player (Crowd) Dynamics}
 
-Each individual crowd member minimizes a cost functional penalizing running distance to the dynamic goal $y(t)$, spatial congestion, and control effort.
+Each crowd member minimizes a cost functional penalizing spatial distance from active goals, spatial congestion, and control effort.
 
 \subsection{Hamilton-Jacobi-Bellman (HJB) Equation}
-Let $u(t, x)$ denote the value function (expected cost-to-go) of a crowd member at position $x$ and time $t$. The value function satisfies the backward-in-time HJB equation \cite{caines2017mean}:
+Let $u(t, x)$ denote the value function (expected cost-to-go) of a crowd member at position $x$ and time $t$. The value function satisfies the backward-in-time HJB equation:
 \begin{equation}
 \label{eq:hjb}
--\frac{\partial u}{\partial t} - \sigma \Delta u + H(x, m, \nabla u) = f(x, y(t)), \quad (t, x) \in (0, T) \times \Omega,
+-\frac{\partial u}{\partial t} - \nu \Delta u + H(x, m, \nabla u) = f(x, t), \quad (t, x) \in (0, T) \times \Omega,
 \end{equation}
-with terminal condition $u(T, x) = g(x, y(T))$ and Dirichlet boundary condition $u(t, x) = 0$ for $x \in \Gamma_{\text{door}}(t)$.
+subject to the terminal condition $u(T, x) = +f(x, T)$ and Dirichlet boundary condition $u(t, x) = 0$ for $x \in \Gamma_{\text{door}}(t)$.
 
-The congestive Hamiltonian $H(x, m, p)$ incorporates crowd density penalties \cite{carmona2016probabilistic}:
+The congestion-dependent Hamiltonian $H(x, m, p)$ models crowd mobility reduction at higher densities:
 \begin{equation}
-H(x, m, p) = \frac{c_0 |p|^2}{(1 + m)^\alpha} - f_0,
+H(x, m, p) = -\frac{\alpha}{(1 + m)^\beta} |p|^2 + h_0,
 \end{equation}
-where $\alpha \in (0, 1]$ represents the congestion exponent and $c_0, f_0 > 0$ are physical parameters.
+where $\alpha, \beta > 0$ control mobility reduction and $h_0$ is a baseline running cost.
 
-The running cost $f(x, y(t))$ penalizes the spatial separation from the goal:
+\subsection{Active Goal Selection \& Running Cost}
+Let $\mathcal{A}(t) \subseteq \{1, \dots, G\}$ denote the set of goals that remain active and unsaturated at time $t$. The running cost $f(x, t)$ penalizes distance to the nearest unsaturated goal and incorporates an optional repulsive penalty $S(x, t)$ around saturated goals:
 \begin{equation}
-f(x, y(t)) = \frac{\chi}{2} \|x - y(t)\|^2,
+\label{eq:running_cost}
+f(x, t) = \chi \min_{g \in \mathcal{A}(t)} \|x - y_g(t)\|^2 + S(x, t),
 \end{equation}
-where $\chi > 0$ is the attraction weight.
+where $\chi > 0$ is the attraction weight. If a goal $g$ is fully saturated ($g \notin \mathcal{A}(t)$), it is removed from the minimum-distance calculation. If a non-zero saturated goal penalty coefficient $w_{\text{sat}} > 0$ is configured, saturated goals exert a local Gaussian repulsive barrier:
+\begin{equation}
+S(x, t) = w_{\text{sat}} \sum_{g \notin \mathcal{A}(t)} \exp\left( -\frac{\|x - y_g(t)\|^2}{2 \sigma_{\text{sat}}^2} \right).
+\end{equation}
 
 \subsection{Kolmogorov-Fokker-Planck (KFP) Equation}
-The aggregate density $m(t, x)$ of the crowd evolves forward in time according to the controlled drift velocity $\mathbf{v}(t, x) = -\nabla_p H(x, m, \nabla u)$ \cite{huang2016backward}:
+The aggregate crowd density $m(t, x)$ evolves forward in time according to the optimal velocity drift field $\mathbf{v}(t, x) = -\nabla_p H(x, m, \nabla u)$:
 \begin{equation}
 \label{eq:kfp}
-\frac{\partial m}{\partial t} - \sigma \Delta m - \text{div}\left( m \, \frac{2 c_0 \nabla u}{(1 + m)^\alpha} \right) = 0, \quad (t, x) \in (0, T) \times \Omega,
+\frac{\partial m}{\partial t} - \nu \Delta m - \text{div}\left( m \, \frac{2 \alpha \nabla u}{(1 + m)^\beta} \right) = 0, \quad (t, x) \in (0, T) \times \Omega,
 \end{equation}
-subject to initial density $m(0, x) = m_0(x)$, homogeneous Neumann boundary conditions on $\Gamma_{\text{wall}}$, and Dirichlet absorption ($m(t, x) = 0$) on $\Gamma_{\text{door}}(t)$.
+subject to the initial density $m(0, x) = m_0(x)$, homogeneous Neumann conditions on $\Gamma_{\text{wall}}$, and Dirichlet absorption ($m(t, x) = 0$) on active exit regions $\Gamma_{\text{door}}(t)$.
 
-\section{Major Player (Evader) Optimal Control}
+\section{Goal Dynamics \& Capacity Saturation}
 
-The goal's trajectory $y(t)$ evolves according to its velocity control $a(t) \in \mathbb{R}^2$:
+\subsection{Centralized Saturation State Tracking}
+Any goal $g$ configured with a finite capacity limit $C_{\text{max}, g} < \infty$ automatically acts as a mass-absorbing exit ($is\_exit = \text{true}$). The cumulative crowd mass that has exited through the goal region $\Omega_g(t)$ up to time $t$ is given by:
 \begin{equation}
-\dot{y}(t) = a(t), \quad y(0) = y_0.
+C_g(t) = \int_0^t \int_{\Omega_g(s)} m(s, x) \, dx \, ds.
 \end{equation}
-
-\subsection{Goal Cost Functional}
-The goal seeks to maximize its distance from high crowd density regions while minimizing kinetic expenditure \cite{bergault2024mean, wan2021improved}:
+The saturation step $t_{\text{sat}, g}$ is defined as the earliest time at which cumulative exited mass reaches capacity:
 \begin{equation}
-\label{eq:goal_cost}
-J_E(a) = \int_0^T \left( \int_{\Omega} \Phi(x - y(t)) m(t, x) \, dx + \frac{\gamma}{2} \|a(t)\|^2 \right) dt - G(y(T)),
+t_{\text{sat}, g} = \min \left\{ t \in [0, T] : C_g(t) \ge C_{\text{max}, g} \right\}.
 \end{equation}
-where $\Phi(r)$ is a repelling interaction kernel (e.g., Gaussian interaction $\Phi(r) = w_0 \exp(-\|r\|^2 / (2 r_0^2))$) and $\gamma > 0$ denotes control effort cost.
+For all $t \ge t_{\text{sat}, g}$:
+\begin{enumerate}
+    \item Goal $g$ is marked as saturated ($g \notin \mathcal{A}(t)$) and removed from the HJB attraction field.
+    \item The corresponding exit boundary region closes: $\Gamma_{\text{door}, g}(t) = \emptyset$.
+    \item The goal trajectory freezes permanently at its saturation coordinates: $y_g(t) = y_g(t_{\text{sat}, g})$.
+\end{enumerate}
 
-\subsection{Pontryagin's Maximum Principle \& Escape Force}
-Defining the goal costate vector $p_E(t) \in \mathbb{R}^2$, Pontryagin's Maximum Principle yields the optimal escape velocity \cite{badakaya2022game}:
+\subsection{Evasive Goal Trajectories}
+For active ($t < t_{\text{sat}, g}$) evading goals, the motion vector $y_g(t)$ is driven by a continuous repulsive force field $F(y_g(t))$ computed from the local crowd density distribution:
 \begin{equation}
-a^*(t) = -\frac{p_E(t)}{\gamma}.
+\label{eq:repulsion_force}
+F(y_g(t)) = \int_{\Omega} \frac{y_g(t) - x}{\|y_g(t) - x\|^2 + \epsilon} m(t, x) \, dx,
 \end{equation}
-
-The costate vector $p_E(t)$ satisfies the adjoint backward differential equation:
+where $\epsilon > 0$ is a spatial regularization parameter preventing singularities. The velocity vector is constrained by a maximum speed parameter $v_{\text{max}, g}$:
 \begin{equation}
-\label{eq:costate}
-\dot{p}_E(t) = \int_{\Omega} \nabla_y \Phi(x - y(t)) m(t, x) \, dx, \quad p_E(T) = -\nabla_y G(y(T)).
+v_g(t) = \begin{cases} 
+v_{\text{max}, g} \dfrac{F(y_g(t))}{\|F(y_g(t))\|}, & \text{if } \|F(y_g(t))\| > \delta, \\[8pt]
+0, & \text{otherwise.}
+\end{cases}
 \end{equation}
-
-Differentiating the trajectory equation yields a second-order equation of motion driven by the macroscopic density gradient field:
+The spatial position updates forward in time via Euler integration and is projected onto the walkable domain $\Omega \setminus \Omega_{\text{obs}}$ to prevent obstacle collision:
 \begin{equation}
-\label{eq:goal_acceleration}
-\ddot{y}(t) = -\frac{1}{\gamma} \int_{\Omega} \nabla_y \Phi(x - y(t)) m(t, x) \, dx.
-\end{equation}
-
-\section{The Coupled Major-Minor Nash Equilibrium}
-
-A Mean Field Nash Equilibrium is defined as a tuple $(u^*, m^*, y^*, p_E^*)$ simultaneously satisfying the coupled system:
-\begin{equation}
-\begin{cases}
--\dfrac{\partial u}{\partial t} - \sigma \Delta u + H(x, m, \nabla u) = \dfrac{\chi}{2} \|x - y(t)\|^2, & u(T, x) = g(x, y(T)), \\[10pt]
-\dfrac{\partial m}{\partial t} - \sigma \Delta m - \text{div}\left( m \nabla_p H(x, m, \nabla u) \right) = 0, & m(0, x) = m_0(x), \\[10pt]
-\dot{y}(t) = -\dfrac{p_E(t)}{\gamma}, & y(0) = y_0, \\[10pt]
-\dot{p}_E(t) = \int_{\Omega} \nabla_y \Phi(x - y(t)) m(t, x) \, dx, & p_E(T) = -\nabla_y G(y(T)).
+y_g(t + \Delta t) = \begin{cases} 
+\mathcal{P}_{\Omega \setminus \Omega_{\text{obs}}} \left( y_g(t) + v_g(t) \Delta t \right), & \text{if } t < t_{\text{sat}, g}, \\[6pt]
+y_g(t_{\text{sat}, g}), & \text{if } t \ge t_{\text{sat}, g}.
 \end{cases}
 \end{equation}
 
 \section{Algorithmic Resolution via Extended Picard Iteration}
 
-To compute the coupled equilibrium, we employ an iterative fixed-point algorithm with under-relaxation parameter $\theta \in (0, 1]$:
+The coupled HJB-KFP system and dynamic goal trajectories are solved iteratively using a damped Picard fixed-point scheme with under-relaxation parameter $\theta \in (0, 1]$. To prevent trajectory bleeding across iterations, post-saturation positions are explicitly clamped.
 
 \begin{enumerate}
-    \item \textbf{Initialization:} Set initial guesses $U^{(0)}(t, x)$, $M^{(0)}(t, x)$, and $y^{(0)}(t)$ for $t \in [0, T]$.
-    \item \textbf{Step 1 (HJB Backward):} Solve Eq.~\eqref{eq:hjb} backward from $t = T$ to $t = 0$ using $M^{(k-1)}$ and $y^{(k-1)}$ to obtain $\tilde{U}^{(k)}$. Update $U^{(k)} = \theta \tilde{U}^{(k)} + (1-\theta) U^{(k-1)}$.
-    \item \textbf{Step 2 (KFP Forward):} Solve Eq.~\eqref{eq:kfp} forward from $t = 0$ to $t = T$ using $U^{(k)}$ to obtain $\tilde{M}^{(k)}$. Update $M^{(k)} = \theta \tilde{M}^{(k)} + (1-\theta) M^{(k-1)}$.
-    \item \textbf{Step 3 (Goal Trajectory Forward/Backward):} Integrate Eq.~\eqref{eq:costate} backward and trajectory $\dot{y}(t)$ forward using $M^{(k)}$ to obtain $\tilde{y}^{(k)}(t)$. Update $y^{(k)} = \theta \tilde{y}^{(k)} + (1-\theta) y^{(k-1)}$.
-    \item \textbf{Convergence Check:} Repeat until $\|U^{(k)} - U^{(k-1)}\|_2 < \epsilon$ and $\|M^{(k)} - M^{(k-1)}\|_2 < \epsilon$.
+    \item \textbf{Initialization:} Initialize $U^{(0)}(t, x)$, $M^{(0)}(t, x)$, and goal trajectories $Y^{(0)}(t) = \{y_g^{(0)}(t)\}_{g=1}^G$.
+    \item \textbf{Step 1 (Goal Motion \& Saturation Update):} Given crowd density $M^{(k-1)}$, compute temporary goal trajectories $Y_{\text{temp}}$ and evaluate cumulative mass absorption $C_g(t)$. Identify saturation steps $t_{\text{sat}, g}$ and assemble the exit door mask $\Gamma_{\text{door}}(t)$.
+    \item \textbf{Step 2 (HJB Backward Solve):} Solve Eq.~\eqref{eq:hjb} backward from $t = T$ to $t = 0$ using $M^{(k-1)}$, active goal set $\mathcal{A}(t)$, and $Y_{\text{temp}}$ to obtain $\tilde{U}^{(k)}$. Update value function:
+    \begin{equation}
+    U^{(k)} = \theta \tilde{U}^{(k)} + (1-\theta) U^{(k-1)}.
+    \end{equation}
+    \item \textbf{Step 3 (KFP Forward Solve):} Solve Eq.~\eqref{eq:kfp} forward from $t = 0$ to $t = T$ using $U^{(k)}$ and $\Gamma_{\text{door}}(t)$ to obtain $\tilde{M}^{(k)}$. Update crowd density:
+    \begin{equation}
+    M^{(k)} = \theta \tilde{M}^{(k)} + (1-\theta) M^{(k-1)}.
+    \end{equation}
+    \item \textbf{Step 4 (Trajectory Relaxation \& Post-Saturation Clamping):} Apply under-relaxation to goal trajectories:
+    \begin{equation}
+    Y^{(k)} = \theta Y_{\text{temp}} + (1-\theta) Y^{(k-1)}.
+    \end{equation}
+    For all goals $g$ that reach capacity at $t_{\text{sat}, g} \le T$, enforce hard position clamping for all $t \ge t_{\text{sat}, g}$:
+    \begin{equation}
+    y_g^{(k)}(t) = y_g(t_{\text{sat}, g}), \quad \forall t \ge t_{\text{sat}, g}.
+    \end{equation}
+    \item \textbf{Convergence Check:} Repeat until space-time L2 residuals satisfy $\|U^{(k)} - U^{(k-1)}\|_2 < \epsilon$, $\|M^{(k)} - M^{(k-1)}\|_2 < \epsilon$, and $\|Y^{(k)} - Y^{(k-1)}\|_2 < \epsilon$.
 \end{enumerate}
+
+\section{Software Architecture \& Code Implementation}
+
+The mathematical formulation is implemented as a modular Python library (\texttt{mfgames}). High-performance finite difference operators are accelerated using Numba JIT compilation, and sparse linear systems are assembled in COO format and solved via Scipy sparse solver routines.
+
+\subsection{Single Source of Truth for Goal Saturation (\texttt{mfgames/objectives.py})}
+The \texttt{Goal} class manages goal initialization, trajectory updates, and capacity tracking. In \texttt{Goal.update_positions()}, cumulative mass $C_g(t)$ exiting through each goal region is integrated. Once $C_g(t) \ge C_{\text{max}, g}$, the state array \texttt{is_saturated[k, g]} is set to \texttt{True}, and positions are permanently frozen:
+
+\begin{verbatim}
+# Track cumulative mass exiting at step k
+if is_exit and np.isfinite(cap):
+    if k > 0 and self.is_saturated[k - 1, g]:
+        self.is_saturated[k:, g] = True
+        if k < self.Nt:
+            new_trajectories[k + 1:, g] = [curr_x, curr_y]
+        continue
+
+    region = (np.abs(X_grid - curr_x) <= Dx) & (np.abs(Y_grid - curr_y) <= Dy)
+    mass_exiting_at_k = np.sum(M_k[region]) * Dx * Dy
+    cumulative_mass[g] += mass_exiting_at_k
+
+    if cumulative_mass[g] >= cap:
+        self.is_saturated[k:, g] = True
+        if self.saturation_steps[g] > k:
+            self.saturation_steps[g] = k
+        if k < self.Nt:
+            new_trajectories[k + 1:, g] = [curr_x, curr_y]
+        continue
+\end{verbatim}
+
+\subsection{Active Goal Filtering \& Trajectory Clamping (\texttt{mfgames/problem.py})}
+The \texttt{MFGSolver} class coordinates the coupled HJB-KFP solver loop. In \texttt{compute_running_cost()}, the solver queries \texttt{Goal.is_saturated} directly to filter out saturated goals from the active attraction set $\mathcal{A}(t)$ and apply optional repulsive penalties:
+
+\begin{verbatim}
+def compute_running_cost(self, goal_positions_k, k=None):
+    X, Y = self.pde_mesh.X, self.pde_mesh.Y
+    active_distances = []
+    saturated_repulsion = np.zeros((self.Nx, self.Ny))
+
+    for g_idx, (gx, gy) in enumerate(goal_positions_k):
+        is_active = True
+        if k is not None and self.goal is not None and self.goal.has_capacity_limits:
+            if self.goal.is_saturated[k, g_idx]:
+                is_active = False
+
+        if is_active:
+            dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
+            active_distances.append(dist_sq)
+        elif self.saturated_goal_penalty > 0.0:
+            dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
+            sigma_sq = (10.0 * self.Dx) ** 2
+            saturated_repulsion += self.saturated_goal_penalty * np.exp(-dist_sq / (2.0 * sigma_sq))
+
+    if active_distances:
+        min_dist_sq = np.minimum.reduce(active_distances)
+    else:
+        min_dist_sq = np.zeros((self.Nx, self.Ny))
+
+    return self.running_cost_weight * min_dist_sq + saturated_repulsion
+\end{verbatim}
+
+During the macro Picard iteration loop in \texttt{run_picard_system()}, under-relaxation is applied to goal trajectories, followed by an explicit clamp to freeze positions for all $t \ge t_{\text{sat}, g}$:
+
+\begin{verbatim}
+# Step 5: Relax goal trajectories and clamp post-saturation positions across all k >= sat_k
+if self.goal is not None and Y_temp is not None:
+    Y_new = self.thetaUM * Y_temp + (1.0 - self.thetaUM) * self.goal.Y_trajectories
+
+    for g_idx in range(self.goal.num_goals):
+        sat_k = self.goal.saturation_steps[g_idx]
+        if sat_k <= self.Nt:
+            Y_new[sat_k:, g_idx, :] = Y_temp[sat_k, g_idx, :]
+
+    self.goal.Y_trajectories = np.copy(Y_new)
+\end{verbatim}
+
+\subsection{Visualizing Saturation States (\texttt{mfgames/plotting.py})}
+The \texttt{MFGPlotter} class handles snapshot dashboards and video generation. In \texttt{_draw_goals()}, it reads \texttt{Goal.is_saturated[t_idx, g_idx]} directly to color-code markers dynamically:
+
+\begin{verbatim}
+def _draw_goals(self, ax, t_idx=0):
+    if self.evader_trajectories is not None and self.goal_instance is not None:
+        for g_idx, g_info in enumerate(self.goal_instance.goals):
+            pos = self.evader_trajectories[t_idx, g_idx]
+            is_sat = self.goal_instance.is_saturated[t_idx, g_idx]
+            marker_color = '#ff2222' if is_sat else '#00f2fe'
+
+            ax.scatter(pos[0], pos[1], color=marker_color, marker='X', s=80, edgecolor='black', zorder=10)
+\end{verbatim}
 
 \begin{thebibliography}{99}
 

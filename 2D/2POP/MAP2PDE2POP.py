@@ -177,10 +177,10 @@ def getFnU_2D_2Pop(Ukp1_np1, Ukp1_n, Mk_np1,Mk_other, omask_arr, Nx, Ny, Dx, Dy,
                         npart(p1)**2 + ppart(p2)**2 + npart(p3)**2 + ppart(p4)**2)
             
             if pop == 1:
-                # POP 1: Attracted to Pop 2 (+2500) AND attracted to their own swarm (+800)
+                # POP 1: Attracted to Pop 2 (+2500) AND attracted to their own crowd (+800)
                 interaction_cost = +1500.0 * Mk_other[i, j]+ppart(Mk_np1[i,j]+Mk_other[i,j]-4)#+ 200.0 * Mk_np1[i, j]
             else:
-                # POP 2: Phobic of Pop 1 (-5000) AND attracted to their own swarm (+800)
+                # POP 2: Phobic of Pop 1 (-5000) AND attracted to their own crowd (+800)
                 interaction_cost = -5000.0 * Mk_other[i, j]+ppart(Mk_np1[i,j]+Mk_other[i,j]-4)#+  200.0 * Mk_np1[i, j]
 
             FnU[i, j] = time_deriv + diffusion + hamiltonian+interaction_cost

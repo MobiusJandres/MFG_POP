@@ -26,8 +26,8 @@ pop1_blobs:
 pop2_blobs:
   - [400.0, 175.0, 40.0, 5.0]
 
-# Target Goal Coordinates [x, y]
-pop1_goals: []                   # Pop 1 has no target exit goal
+# Goal Coordinates [x, y]
+pop1_goals: []                   # Pop 1 has no goal exit goal
 
 pop2_goals:
-  - [400.0, 700.0]              # Pop 2 target exit goal
+  - [400.0, 700.0]              # Pop 2 goal exit goal

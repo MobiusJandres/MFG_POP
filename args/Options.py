@@ -15,7 +15,7 @@ class Options:
         self.parser = argparse.ArgumentParser(description="Mean Field Games Drone Simulation Suite")
 
         # --- Core Execution & Logging Arguments ---
-        self.parser.add_argument('--config', default='configs/pursuit_evasion.yml', type=str, help='Path to YAML run configuration file.')
+        self.parser.add_argument('--config', default='configs/map_simulation.yml', type=str, help='Path to YAML run configuration file.')
         self.parser.add_argument('--results_dir', default='results', type=str, help='Base directory for storing experiment outputs.')
         self.parser.add_argument('--exp_name', default='default_exp', type=str, help='Experiment group name.')
         self.parser.add_argument('--run_name', default=None, type=str, help='Optional run identifier name.')

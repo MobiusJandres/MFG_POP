@@ -408,11 +408,11 @@ class MFGSolver:
                 self.door_mask = self.compute_saturated_door_mask(goal_trajectories)
                 self.door_mask_3d = self.door_mask
 
-            # Step 3: Solve HJB backward in time[cite: 36]
+            # Step 3: Solve HJB backward in time
             U_temp = self.solve_backward_HJB_step(self.M, goal_trajectories, self.door_mask)
             U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
 
-            # Step 4: Solve FP forward in time[cite: 36]
+            # Step 4: Solve FP forward in time
             M_temp = self.solve_forward_FP_step(U_new, self.door_mask)
             M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
 

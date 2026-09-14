@@ -547,9 +547,8 @@ If you use this library in academic work, please cite:
 ```bibtex
 @software{mfgames2024,
   title = {mfgames: Mean Field Games Library for Crowd Dynamics},
-  author = {Your Name},
-  year = {2024},
-  url = {https://github.com/yourrepo/mfgames}
+  year = {2026},
+  url = {https://github.com/c-JAndres/MFG_POP}
 }
 ```
 

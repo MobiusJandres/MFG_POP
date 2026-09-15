@@ -1,0 +1,269 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{bm}
+\usepackage{verbatim}
+
+\title{\textbf{Notes on Goal Capacity Saturation in Mean Field Games}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document details the mathematical theory and numerical implementation of goal capacity saturation in Mean Field Game (MFG) systems modeling crowd navigation. In spatial domains containing exit doors or mobile landing platforms, goals often possess finite mass absorption ceilings. Once a goal reaches its cumulative capacity limit, its exit boundary condition deactivates, its spatial attraction potential terminates, and its dynamic trajectory freezes permanently. We present the continuum mathematical formulation for capacity-constrained Hamilton-Jacobi-Bellman (HJB) and Kolmogorov-Fokker-Planck (KFP) systems, the centralized state tracking architecture, and the Picard iteration trajectory clamping scheme that prevents numerical motion bleeding.
+\end{abstract}
+
+\section{Introduction \& Problem Definition}
+
+In standard Mean Field Games (MFG) crowd models, goals represent infinite-capacity spatial attractors or absorbing boundaries where crowd mass exits the domain continuously. However, realistic applications—such as emergency evacuation through capacity-limited doors or automated landing platforms—require modeling goals with finite capacity limits $C_{\text{max}, g} < \infty$.
+
+When the cumulative crowd mass absorbing into or passing through goal $g$ reaches $C_{\text{max}, g}$, the goal undergoes a discrete phase transition:
+\begin{enumerate}
+    \item \textbf{Boundary Condition Transition:} The goal's absorbing exit boundary deactivates and reverts to standard interior domain transport.
+    \item \textbf{Attraction Termination:} The goal is removed from the crowd's optimal navigation cost functional, preventing further crowd accumulation.
+    \item \textbf{Kinematic Freezing:} If the goal is dynamic (e.g., a reactive evading goal or path-following platform), its motion freezes permanently at its saturation coordinates.
+\end{enumerate}
+
+\section{Mathematical Formulation}
+
+Let $\Omega \subset \mathbb{R}^2$ be a bounded domain with obstacle boundary $\Gamma_{\text{wall}}$ enforcing zero-flux Neumann conditions and active goal exit boundaries $\Gamma_{\text{door}}(t)$. The continuum crowd density is $m(t, x) \ge 0$ and the value function (expected cost-to-go) is $u(t, x)$ for $t \in [0, T]$.
+
+The system consists of $G$ discrete goals $\{y_g(t)\}_{g=1}^G \subset \Omega$, each defined with a capacity ceiling $C_{\text{max}, g} \in (0, \infty]$.
+
+\subsection{Cumulative Mass Integration \& Saturation Step}
+Any goal $g$ with finite capacity ($C_{\text{max}, g} < \infty$) acts as an absorbing exit boundary ($\Omega_g(t)$). The cumulative crowd mass that has exited through goal $g$ up to time $t$ is given by:
+\begin{equation}
+\label{eq:cum_mass}
+C_g(t) = \int_0^t \int_{\Omega_g(s)} m(s, x) \, dx \, ds.
+\end{equation}
+
+The exact saturation time $t_{\text{sat}, g}$ is defined as the earliest time step when cumulative exited mass reaches capacity:
+\begin{equation}
+t_{\text{sat}, g} = \min \left\{ t \in [0, T] : C_g(t) \ge C_{\text{max}, g} \right\}.
+\end{equation}
+If $C_g(t) < C_{\text{max}, g}$ for all $t \in [0, T]$, then $t_{\text{sat}, g} = \infty$.
+
+\subsection{Coupled HJB-KFP Boundary \& Potential Modifications}
+
+\subsubsection{1. Time-Dependent Exit Boundary Deactivation}
+The active exit boundary $\Gamma_{\text{door}}(t)$ is defined as the union of active, unsaturated goal regions:
+\begin{equation}
+\Gamma_{\text{door}}(t) = \bigcup_{g : t < t_{\text{sat}, g}} \Omega_g(t).
+\end{equation}
+For $t < t_{\text{sat}, g}$, the goal imposes homogeneous Dirichlet boundary conditions on both HJB and KFP equations:
+\begin{equation}
+u(t, x) = 0, \quad m(t, x) = 0 \quad \text{for } x \in \Omega_g(t).
+\end{equation}
+For $t \ge t_{\text{sat}, g}$, the region $\Omega_g(t)$ is removed from $\Gamma_{\text{door}}(t)$, reverting to standard interior domain transport governed by Eqs.~\eqref{eq:hjb_full} and \eqref{eq:kfp_full}.
+
+\subsubsection{2. Active Goal Selection in HJB Running Cost}
+Let $\mathcal{A}(t) = \{ g \in \{1, \dots, G\} : t < t_{\text{sat}, g} \}$ denote the set of active, unsaturated goals at time $t$. The spatial running cost $f(x, t)$ driving the HJB equation excludes saturated goals:
+\begin{equation}
+\label{eq:hjb_cost}
+f(x, t) = \chi \min_{g \in \mathcal{A}(t)} \|x - y_g(t)\|^2 + S(x, t),
+\end{equation}
+where $\chi > 0$ is the attraction weight. If all goals saturate ($\mathcal{A}(t) = \emptyset$), the attraction gradient vanishes ($\min_{g \in \emptyset} = 0$).
+
+Optionally, a user-configured saturated goal penalty weight $w_{\text{sat}} \ge 0$ generates a local Gaussian repulsive barrier around closed goals:
+\begin{equation}
+S(x, t) = w_{\text{sat}} \sum_{g \notin \mathcal{A}(t)} \exp\left( -\frac{\|x - y_g(t)\|^2}{2 \sigma_{\text{sat}}^2} \right).
+\end{equation}
+
+\subsubsection{3. Coupled PDE System}
+The complete capacity-constrained Mean Field Game PDE system is:
+\begin{align}
+\label{eq:hjb_full}
+-\frac{\partial u}{\partial t} - \nu \Delta u - \frac{\alpha}{(1 + m)^\beta} |\nabla u|^2 + h_0 &= f(x, t), \quad &&u(T, x) = +f(x, T), \\
+\label{eq:kfp_full}
+\frac{\partial m}{\partial t} - \nu \Delta m - \text{div}\left( m \, \frac{2 \alpha \nabla u}{(1 + m)^\beta} \right) &= 0, \quad &&m(0, x) = m_0(x),
+\end{align}
+subject to zero-flux Neumann conditions on $\Gamma_{\text{wall}}$ and Dirichlet conditions $u=0, m=0$ on $\Gamma_{\text{door}}(t)$.
+
+\subsection{Kinematic Trajectory Freezing for Dynamic Goals}
+For reactive evading goals, the velocity $v_g(t)$ is computed from the crowd density repulsive force field $F(y_g(t))$:
+\begin{equation}
+F(y_g(t)) = \int_{\Omega} \frac{y_g(t) - x}{\|y_g(t) - x\|^2 + \epsilon} m(t, x) \, dx.
+\end{equation}
+Once a goal saturates at $t_{\text{sat}, g}$, its trajectory $y_g(t)$ freezes permanently at its saturation coordinates:
+\begin{equation}
+y_g(t) = \begin{cases} 
+\mathcal{P}_{\Omega \setminus \Omega_{\text{obs}}} \left( y_g(0) + \int_0^t v_g(s) \, ds \right), & \text{if } t < t_{\text{sat}, g}, \\[6pt]
+y_g(t_{\text{sat}, g}), & \text{if } t \ge t_{\text{sat}, g}.
+\end{cases}
+\end{equation}
+
+\section{Algorithmic Resolution \& Trajectory Clamping}
+
+The coupled system is resolved via damped Picard fixed-point iteration with under-relaxation $\theta \in (0, 1]$. To prevent under-relaxation from bleeding previous iterations' motion into post-saturation timesteps, explicit trajectory clamping is applied.
+
+\begin{enumerate}
+    \item \textbf{Goal Update (Single Source of Truth):} Given crowd density $M^{(k-1)}(t, x)$, update trajectory guesses $Y_{\text{temp}}$, compute cumulative mass $C_g(t)$, determine saturation timesteps $t_{\text{sat}, g}$, and update the saturation indicator tensor $\text{is\_saturated}[t, g]$.
+    \item \textbf{Door Mask Assembly:} Construct $\Gamma_{\text{door}}(t)$ using $\text{is\_saturated}[t, g]$.
+    \item \textbf{Backward HJB Solve:} Solve Eq.~\eqref{eq:hjb_full} backward from $t = T$ to $t = 0$ using active goal set $\mathcal{A}(t)$ and terminal cost $u(T, x) = +f(x, T)$ to obtain $\tilde{U}^{(k)}$. Relax: $U^{(k)} = \theta \tilde{U}^{(k)} + (1-\theta) U^{(k-1)}$.
+    \item \textbf{Forward KFP Solve:} Solve Eq.~\eqref{eq:kfp_full} forward from $t = 0$ to $t = T$ using $U^{(k)}$ and $\Gamma_{\text{door}}(t)$ to obtain $\tilde{M}^{(k)}$. Relax: $M^{(k)} = \theta \tilde{M}^{(k)} + (1-\theta) M^{(k-1)}$.
+    \item \textbf{Trajectory Relaxation \& Post-Saturation Clamping:} Relax goal trajectories:
+    \begin{equation}
+    Y^{(k)}(t) = \theta Y_{\text{temp}}(t) + (1-\theta) Y^{(k-1)}(t).
+    \end{equation}
+    For all goals $g$ with $t_{\text{sat}, g} \le T$, clamp the relaxed trajectory for all $t \ge t_{\text{sat}, g}$:
+    \begin{equation}
+    y_g^{(k)}(t) = Y_{\text{temp}}(t_{\text{sat}, g}), \quad \forall t \ge t_{\text{sat}, g}.
+    \end{equation}
+\end{enumerate}
+
+\section{Python Software Architecture (\texttt{mfgames})}
+
+The capacity saturation system is implemented across three core modules in the \texttt{mfgames} library:
+
+\subsection{1. Centralized Goal State Management (\texttt{mfgames/objectives.py})}
+The \texttt{Goal} class serves as the **single source of truth** for goal configurations, trajectory integration, mass accumulation, and saturation state tracking.
+
+\subsubsection{Automatic Exit Designation}
+During initialization in \texttt{Goal.__init__()}, any goal configured with a finite capacity ceiling ($C_{\text{max}, g} < \infty$) is automatically designated as an absorbing exit boundary (\texttt{is_exit = True}):
+
+\begin{verbatim}
+if 'is_exit' in cfg:
+    is_exit = bool(cfg['is_exit'])
+elif np.isfinite(cap):
+    is_exit = True  # Finite capacity automatically implies exit behavior
+else:
+    is_exit = goals_are_exits_default
+\end{verbatim}
+
+\subsubsection{Mass Accumulation \& Trajectory Freezing}
+In \texttt{Goal.update_positions()}, mass density exiting through each goal region is integrated. Once capacity is met, \texttt{is_saturated[k:, g]} is toggled to \texttt{True}, recording the exact saturation time step in \texttt{saturation_steps[g]} and freezing post-saturation positions:
+
+\begin{verbatim}
+for k in range(self.Nt + 1):
+    M_k = M_field[k]
+    total_mass = np.sum(M_k)
+
+    for g, g_info in enumerate(self.goals):
+        cap = g_info.get('capacity', float('inf'))
+        is_exit = g_info['is_exit']
+        curr_x, curr_y = new_trajectories[k, g]
+
+        if is_exit and np.isfinite(cap):
+            # Check if previously saturated
+            if k > 0 and self.is_saturated[k - 1, g]:
+                self.is_saturated[k:, g] = True
+                if k < self.Nt:
+                    new_trajectories[k + 1:, g] = [curr_x, curr_y]
+                continue
+
+            # Integrate mass exiting through goal region at step k
+            region = (np.abs(X_grid - curr_x) <= Dx) & (np.abs(Y_grid - curr_y) <= Dy)
+            mass_exiting_at_k = np.sum(M_k[region]) * Dx * Dy
+            cumulative_mass[g] += mass_exiting_at_k
+
+            # Detect saturation threshold
+            if cumulative_mass[g] >= cap:
+                self.is_saturated[k:, g] = True
+                if self.saturation_steps[g] > k:
+                    self.saturation_steps[g] = k
+                if k < self.Nt:
+                    new_trajectories[k + 1:, g] = [curr_x, curr_y]
+                continue
+\end{verbatim}
+
+\subsection{2. Solver Integration \& Trajectory Clamping (\texttt{mfgames/problem.py})}
+The \texttt{MFGSolver} class queries \texttt{Goal.is_saturated} directly to build the exit door mask and running cost field.
+
+\subsubsection{Door Mask Assembly \& Running Cost Filtering}
+In \texttt{compute_saturated_door_mask()} and \texttt{compute_running_cost()}, saturated goals are excluded from the active exit mask and minimum-distance attraction field:
+
+\begin{verbatim}
+def compute_running_cost(self, goal_positions_k, k=None):
+    X, Y = self.pde_mesh.X, self.pde_mesh.Y
+    active_distances = []
+    saturated_repulsion = np.zeros((self.Nx, self.Ny))
+
+    for g_idx, (gx, gy) in enumerate(goal_positions_k):
+        is_active = True
+        if k is not None and self.goal is not None and self.goal.has_capacity_limits:
+            if self.goal.is_saturated[k, g_idx]:
+                is_active = False
+
+        if is_active:
+            dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
+            active_distances.append(dist_sq)
+        elif self.saturated_goal_penalty > 0.0:
+            dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
+            sigma_sq = (10.0 * self.Dx) ** 2
+            saturated_repulsion += self.saturated_goal_penalty * np.exp(-dist_sq / (2.0 * sigma_sq))
+
+    if active_distances:
+        min_dist_sq = np.minimum.reduce(active_distances)
+    else:
+        min_dist_sq = np.zeros((self.Nx, self.Ny))
+
+    return self.running_cost_weight * min_dist_sq + saturated_repulsion
+\end{verbatim}
+
+\subsubsection{Picard Loop Execution \& Clamping}
+Inside \texttt{run_picard_system()}, under-relaxation is applied to goal trajectories, followed by hard position clamping for all $k \ge k_{\text{sat}, g}$:
+
+\begin{verbatim}
+# Step 5: Relax goal trajectories and clamp post-saturation positions across all k >= sat_k
+if self.goal is not None and Y_temp is not None:
+    Y_new = self.thetaUM * Y_temp + (1.0 - self.thetaUM) * self.goal.Y_trajectories
+
+    # Hard-clamp post-saturation positions to eliminate Picard relaxation drift
+    for g_idx in range(self.goal.num_goals):
+        sat_k = self.goal.saturation_steps[g_idx]
+        if sat_k <= self.Nt:
+            Y_new[sat_k:, g_idx, :] = Y_temp[sat_k, g_idx, :]
+
+    self.goal.Y_trajectories = np.copy(Y_new)
+\end{verbatim}
+
+\subsection{3. Dynamic Plotting Color Switch (\texttt{mfgames/plotting.py})}
+In \texttt{MFGPlotter._draw_goals()}, marker colors switch dynamically based on the state tensor \texttt{Goal.is_saturated[t_idx, g_idx]}:
+
+\begin{verbatim}
+def _draw_goals(self, ax, t_idx=0):
+    if self.evader_trajectories is not None and self.goal_instance is not None:
+        for g_idx, g_info in enumerate(self.goal_instance.goals):
+            pos = self.evader_trajectories[t_idx, g_idx]
+            is_sat = self.goal_instance.is_saturated[t_idx, g_idx]
+            marker_color = '#ff2222' if is_sat else '#00f2fe'
+
+            ax.scatter(pos[0], pos[1], color=marker_color, marker='X', s=80, edgecolor='black', zorder=10)
+\end{verbatim}
+
+\begin{thebibliography}{99}
+
+\bibitem{caines2017mean}
+P.~E. Caines, M.~Huang, and R.~P. Malham{\'e}, 
+\emph{Mean field games}, 
+Handbook of Dynamic Game Theory, Springer, pp.~345--372, 2017.
+
+\bibitem{carmona2016probabilistic}
+R.~Carmona and X.~Zhu, 
+\emph{A probabilistic approach to mean field games with major and minor players}, 
+The Annals of Applied Probability, vol.~26, no.~3, pp.~1535--1580, 2016.
+
+\bibitem{huang2016backward}
+J.~Huang, S.~Wang, and Z.~Wu, 
+\emph{Backward-forward linear-quadratic mean-field games with major and minor agents}, 
+Probability, Uncertainty and Quantitative Risk, vol.~1, no.~1, p.~8, 2016.
+
+\bibitem{bergault2024mean}
+P.~Bergault, P.~Cardaliaguet, and C.~Rainer, 
+\emph{Mean field games in a Stackelberg problem with an informed major player}, 
+SIAM Journal on Control and Optimization, vol.~62, no.~3, pp.~1737--1765, 2024.
+
+\bibitem{badakaya2022game}
+A.~J. Badakaya, A.~S. Halliru, and J.~Adamu, 
+\emph{Game value for a pursuit-evasion differential game problem in a Hilbert space}, 
+Journal of Dynamics \& Games, vol.~9, no.~1, pp.~1--15, 2022.
+
+\end{thebibliography}
+
+\end{document}

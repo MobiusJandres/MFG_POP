@@ -92,7 +92,7 @@ def main():
     options.parser.add_argument('--goals', default=None, nargs='*', help='Goal dictionaries or coordinates')
     options.parser.add_argument('--goals_are_exits', action='store_true', default=False, help='If True, goals act as exits')
 
-    # Negative obstacle penalty creates repulsion barriers (contrast with positive penalties in traffic scenarios)
+    # Negative obstacle penalty creates repulsion barriers (contrast with positive penalties in traffic scenarios)    
     options.parser.add_argument('--obstacle_penalty', type=float, default=-500.0, help='Obstacle cell potential penalty')
 
     # Running cost balances goal-seeking vs congestion-avoidance behavior
@@ -134,22 +134,25 @@ def main():
         custom_goals=goal_configs       # Heterogeneous population goals
     )
     pde_mesh.parse_files(num_agents=args.num_agents)  # Load map/scenario data
-    pde_mesh.build_spatial_mesh()                      # Discretize continuous domain
+    pde_mesh.build_spatial_mesh()                     # Discretize continuous domain
 
     # ============================================================================
     # STEP 3: Solver Configuration
     # ============================================================================
     # Initialize MFG solver with mesh, time discretization, and population parameters
     mfg_solver = MFGSolver(
-        pde_mesh_data=pde_mesh,                              # Spatial mesh with obstacles/doors
-        T=args.T,                                            # Time horizon (seconds)
-        Nt=args.Nt,                                          # Number of time steps
-        thetaUM=args.relaxation_theta,                       # Picard relaxation (0 < theta < 1)
-        goal_configs=goal_configs,                           # Heterogeneous population goals
-        goals_are_exits=args.goals_are_exits,                # Exit mode vs potential well mode
-        obstacle_penalty=args.obstacle_penalty,              # Negative for repulsion barriers
-        running_cost_weight=args.running_cost_weight,        # Congestion sensitivity scaling
-        saturated_goal_penalty=args.saturated_goal_penalty,  # Saturated goal repulsion penalty
+        pde_mesh_data=pde_mesh,                                           # Spatial mesh with obstacles/doors
+        T=args.T,                                                         # Time horizon (seconds)
+        Nt=args.Nt,                                                       # Number of time steps
+        thetaUM=args.relaxation_theta,                                    # Picard relaxation (0 < theta < 1)
+        goal_configs=goal_configs,                                        # Heterogeneous population goals
+        goals_are_exits=args.goals_are_exits,                             # Exit mode vs potential well mode
+        obstacle_penalty=args.obstacle_penalty,                           # Negative for repulsion barriers
+        running_cost_weight=args.running_cost_weight,                     # Congestion sensitivity scaling
+        terminal_cost_weight=getattr(args, 'terminal_cost_weight', None), 
+        running_cost_power=getattr(args, 'running_cost_power', 2),
+        terminal_cost_power=getattr(args, 'terminal_cost_power', 2),
+        saturated_goal_penalty=args.saturated_goal_penalty,                # Saturated goal repulsion penalty
     )
 
     # ============================================================================
@@ -178,9 +181,7 @@ def main():
     animation_path = args.save_dir / "pursuit_evasion.gif"
     plotter.create_movie(frame_dir=str(frames_dir), output_file=str(animation_path), fps=15)
 
-    print("Pursuit-Evasion run completed successfully!", flush=True)
-
-
+    print("Run completed successfully!", flush=True)
 
 # Script entry point: execute main() when run directly (not imported as module)
 if __name__ == "__main__":

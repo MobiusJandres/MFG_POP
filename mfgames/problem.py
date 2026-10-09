@@ -20,6 +20,20 @@ and dynamic goals into a unified execution path. The Picard iteration alternates
 between solving HJB given density m, then solving KFP given value u, with under-relaxation
 (thetaUM parameter) to stabilize convergence.
 
+Mathematical Generalization
+---------------------------
+Decouples running and terminal cost components in the crowd objective functional:
+
+    J(x) = ∫₀ᵀ f(x(t), t) dt + g(x(T))
+
+where:
+    - Running cost f(x, t) = w_R · min_{g ∈ A(t)} ||x - y_g(t)||^{p_R} + S(x, t)
+    - Terminal cost g(x) = w_T · min_{g ∈ A(T)} ||x - y_g(T)||^{p_T}
+
+This parameterization allows mfgames to seamlessly unify modern pursuit-evasion
+models (w_R = 0.01, w_T = +0.01, goals_are_exits: true) with legacy formulations
+such as MAP2PDE.py (w_R = 0.0, w_T = -1.0, p_T = 2, goals_are_exits: false)
+
 Goal Capacity Saturation
 ------------------------
 For mobile landing platforms or capacity-limited exits, the cumulative density absorbed
@@ -88,10 +102,13 @@ class MFGSolver:
         goals_are_exits: bool = False,
         obstacle_penalty: float | None = None,
         running_cost_weight: float = 0.01,
-        saturated_goal_penalty: float = 0.0,  # New parameter
+        terminal_cost_weight: float | None = None,
+        running_cost_power: int = 2,
+        terminal_cost_power: int = 2,
+        saturated_goal_penalty: float = 0.0,
     ):
         """
-        Initialize the Mean Field Game solver.
+        Initialize the Mean Field Game solver with decoupled objective weights.
 
         Args:
             pde_mesh_data (PDEMeshData): Mesh object containing spatial grid, obstacles,
@@ -109,8 +126,12 @@ class MFGSolver:
                 density exits the domain (Dirichlet BC u=0) (default: False)
             obstacle_penalty (float): Large negative value assigned to obstacle cells.
                 If None, auto-scaled to -5 * max_running_cost (default: -500.0)
-            running_cost_weight (float): Coefficient multiplying squared distance to
-                nearest goal in the HJB running cost (default: 0.01)
+            running_cost_weight (float): Running cost weight w_R for t < T (default: 0.01).
+            terminal_cost_weight (float|None): Terminal cost weight w_T at t = T.
+                Defaults to running_cost_weight if None.
+            running_cost_power (int): Distance exponent p_R for running cost (1 or 2).
+            terminal_cost_power (int): Distance exponent p_T for terminal cost (1 or 2).
+            saturated_goal_penalty (float): Repulsive penalty weight for filled goals.
         """
         self.pde_mesh = pde_mesh_data
         self.Nx, self.Ny = pde_mesh_data.X.shape
@@ -119,8 +140,13 @@ class MFGSolver:
         self.Dt, self.Nt = T / Nt, Nt
         self.thetaUM = thetaUM
         self.goals_are_exits = goals_are_exits
+        
+        # Objective functional weights and powers
         self.running_cost_weight = running_cost_weight
-        self.saturated_goal_penalty = saturated_goal_penalty  # Store parameter
+        self.terminal_cost_weight = terminal_cost_weight if terminal_cost_weight is not None else running_cost_weight
+        self.running_cost_power = running_cost_power
+        self.terminal_cost_power = terminal_cost_power
+        self.saturated_goal_penalty = saturated_goal_penalty
 
         # Dynamically scale obstacle penalty relative to max potential drop on grid if not provided.
         # This ensures obstacles remain strongly repulsive regardless of domain size.
@@ -165,7 +191,7 @@ class MFGSolver:
         self.door_mask_3d = self.door_mask
 
     def _build_dynamic_goal_doors(self, goal_trajectories):
-        """Construct time-dependent exit mask for active exit goals."""
+        """Construct time-dependent exit mask for active exit goals[cite: 25]."""
         door_mask = np.zeros((self.Nt + 1, self.Nx, self.Ny))
         if not self.goal or goal_trajectories is None:
             return door_mask
@@ -173,8 +199,7 @@ class MFGSolver:
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
         for k in range(self.Nt + 1):
             for g_idx, g_info in enumerate(self.goal.goals):
-                is_exit = g_info['is_exit']
-                if is_exit:
+                if g_info['is_exit']:
                     gx, gy = goal_trajectories[k, g_idx]
                     region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
                     door_mask[k][region] = 1.0
@@ -189,7 +214,6 @@ class MFGSolver:
         (door_mask = 0) for all subsequent timesteps.
 
         Args:
-            M_field (ndarray): Density distribution trajectory, shape (Nt+1, Nx, Ny)
             goal_trajectories (ndarray): Goal positions, shape (Nt+1, num_goals, 2)
 
         Returns:
@@ -203,8 +227,7 @@ class MFGSolver:
 
         for k in range(self.Nt + 1):
             for g_idx, g_info in enumerate(self.goal.goals):
-                is_exit = g_info['is_exit']
-                if not is_exit:
+                if not g_info['is_exit']:
                     continue
 
                 if not self.goal.is_saturated[k, g_idx]:
@@ -217,6 +240,7 @@ class MFGSolver:
     def compute_running_cost(self, goal_positions_k, k=None):
         """
         Compute distance-based running cost to nearest goal at timestep k, accounting for capacity.
+        Returns 0.0 when running_cost_weight == 0.0.
 
         The running cost penalizes distance from goals, incentivizing the crowd to
         move toward goals. If finite capacity constraints exist, effective distance is
@@ -231,7 +255,7 @@ class MFGSolver:
         Returns:
             ndarray: Running cost field of shape (Nx, Ny)
         """
-        if goal_positions_k is None or len(goal_positions_k) == 0:
+        if self.running_cost_weight == 0.0 or goal_positions_k is None or len(goal_positions_k) == 0:
             return np.zeros((self.Nx, self.Ny))
 
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
@@ -245,8 +269,11 @@ class MFGSolver:
                     is_active = False
 
             if is_active:
-                dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
-                active_distances.append(dist_sq)
+                if self.running_cost_power == 2:
+                    dist_term = (X - gx) ** 2 + (Y - gy) ** 2
+                else:
+                    dist_term = np.sqrt((X - gx) ** 2 + (Y - gy) ** 2)
+                active_distances.append(dist_term)
             elif self.saturated_goal_penalty > 0.0:
                 # Add Gaussian repulsive barrier around closed/saturated goal location
                 dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
@@ -254,11 +281,28 @@ class MFGSolver:
                 saturated_repulsion += self.saturated_goal_penalty * np.exp(-dist_sq / (2.0 * sigma_sq))
 
         if active_distances:
-            min_dist_sq = np.minimum.reduce(active_distances)
+            min_dist = np.minimum.reduce(active_distances)
         else:
-            min_dist_sq = np.zeros((self.Nx, self.Ny))
+            min_dist = np.zeros((self.Nx, self.Ny))
 
-        return self.running_cost_weight * min_dist_sq + saturated_repulsion
+        return self.running_cost_weight * min_dist + saturated_repulsion
+
+    def compute_terminal_cost(self, goal_positions_Nt):
+        """Compute terminal condition g(x) = u(T, x) at time step t = T[cite: 25, 39]."""
+        if self.terminal_cost_weight == 0.0 or goal_positions_Nt is None or len(goal_positions_Nt) == 0:
+            return np.zeros((self.Nx, self.Ny))
+
+        X, Y = self.pde_mesh.X, self.pde_mesh.Y
+        distances = []
+        for gx, gy in goal_positions_Nt:
+            if self.terminal_cost_power == 2:
+                dist_term = (X - gx) ** 2 + (Y - gy) ** 2
+            else:
+                dist_term = np.sqrt((X - gx) ** 2 + (Y - gy) ** 2)
+            distances.append(dist_term)
+
+        min_dist = np.minimum.reduce(distances)
+        return self.terminal_cost_weight * min_dist
 
     def solve_forward_FP_step(self, U_trajectory, door_mask):
         """
@@ -313,10 +357,9 @@ class MFGSolver:
         """
         u = np.zeros_like(self.U)
 
-        # Terminal condition at t = T (Positive running cost for gradient consistency)
+        # Terminal boundary condition u(T, x) = g(x)
         if goal_trajectories is not None:
-            running_cost_Nt = self.compute_running_cost(goal_trajectories[self.Nt], k=self.Nt)
-            u[self.Nt] = +running_cost_Nt
+            u[self.Nt] = self.compute_terminal_cost(goal_trajectories[self.Nt])
         else:
             u[self.Nt] = np.zeros((self.Nx, self.Ny))
 

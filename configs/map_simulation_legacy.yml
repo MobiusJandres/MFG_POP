@@ -1,0 +1,33 @@
+# Core Experiment Metadata
+exp_name: "map_simulation"
+run_name: "map2pde_exact_match"
+results_dir: "results"
+timezone: "UTC"
+
+# Environment & Grid Setup
+map_file: "Maps/AcrosstheCape.map"
+scen_file: "Scenarios/AcrosstheCape_1g.map.scen"
+room_width: 768.0
+room_height: 768.0
+Nx: 200
+Ny: 200
+num_agents: 50
+
+# Generalization Parameters Configured to Match MAP2PDE.py Exactly
+goals_are_exits: false              # Soft potential well (no Dirichlet mass absorption)
+obstacle_penalty: -500.0            # Exact obstacle potential penalty from MAP2PDE.py
+running_cost_weight: 0.0            # Disables spatial running cost during time steps (f(x,t) = 0)
+terminal_cost_weight: -1.0         # Negative terminal cost: g(x) = -1.0 * min_dist^2
+running_cost_power: 2
+terminal_cost_power: 2              # Squared distance
+saturated_goal_penalty: 0.0
+
+# Time & Solver Parameters
+T: 3.0
+Nt: 100
+max_iters: 10
+relaxation_theta: 0.1
+
+goals:
+  - type: "stationary"
+    position: [700.0, 700.0]

@@ -181,12 +181,15 @@ class MFGSolver:
                 goals_are_exits_default=self.goals_are_exits
             )
             self.door_mask = self._build_dynamic_goal_doors(self.goal.Y_trajectories)
+            # Initialize terminal slice to prevent Picard under-relaxation drift at t = T
+            self.U[self.Nt] = self.compute_terminal_cost(self.goal.Y_trajectories[self.Nt])
         else:
             self.goal = None
             if initial_door_mask is not None:
                 self.door_mask = initial_door_mask
             else:
                 self.door_mask = np.zeros((Nt + 1, self.Nx, self.Ny))
+            self.U[self.Nt] = np.zeros((self.Nx, self.Ny))
 
         self.door_mask_3d = self.door_mask
 
@@ -288,21 +291,38 @@ class MFGSolver:
         return self.running_cost_weight * min_dist + saturated_repulsion
 
     def compute_terminal_cost(self, goal_positions_Nt):
-        """Compute terminal condition g(x) = u(T, x) at time step t = T[cite: 25, 39]."""
+        """Compute terminal condition g(x) = u(T, x) at time step t = T, accounting for capacity."""
         if self.terminal_cost_weight == 0.0 or goal_positions_Nt is None or len(goal_positions_Nt) == 0:
             return np.zeros((self.Nx, self.Ny))
 
         X, Y = self.pde_mesh.X, self.pde_mesh.Y
-        distances = []
-        for gx, gy in goal_positions_Nt:
-            if self.terminal_cost_power == 2:
-                dist_term = (X - gx) ** 2 + (Y - gy) ** 2
-            else:
-                dist_term = np.sqrt((X - gx) ** 2 + (Y - gy) ** 2)
-            distances.append(dist_term)
+        active_distances = []
+        saturated_repulsion = np.zeros((self.Nx, self.Ny))
 
-        min_dist = np.minimum.reduce(distances)
-        return self.terminal_cost_weight * min_dist
+        for g_idx, (gx, gy) in enumerate(goal_positions_Nt):
+            is_active = True
+            # Exclude goal if it has saturated by final time t = T (k = Nt)
+            if self.goal is not None and self.goal.has_capacity_limits:
+                if self.goal.is_saturated[self.Nt, g_idx]:
+                    is_active = False
+
+            if is_active:
+                if self.terminal_cost_power == 2:
+                    dist_term = (X - gx) ** 2 + (Y - gy) ** 2
+                else:
+                    dist_term = np.sqrt((X - gx) ** 2 + (Y - gy) ** 2)
+                active_distances.append(dist_term)
+            elif self.saturated_goal_penalty > 0.0:
+                dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
+                sigma_sq = (10.0 * self.Dx) ** 2
+                saturated_repulsion += self.saturated_goal_penalty * np.exp(-dist_sq / (2.0 * sigma_sq))
+
+        if active_distances:
+            min_dist = np.minimum.reduce(active_distances)
+        else:
+            min_dist = np.zeros((self.Nx, self.Ny))
+
+        return self.terminal_cost_weight * min_dist + saturated_repulsion
 
     def solve_forward_FP_step(self, U_trajectory, door_mask):
         """

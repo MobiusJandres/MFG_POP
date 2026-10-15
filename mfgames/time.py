@@ -1,7 +1,4 @@
 """
-Copyright (c) 2025 Matrix Research, Inc
-All rights reserved.
-
 This source code is licensed under the license found in the
 LICENSE file in the root directory of this source tree.
 
@@ -24,13 +21,6 @@ Example usage:
     '2026-08-26 10-30-45'
     >>> numeric_timestamp(tz='UTC', include_seconds=False)
     '202608261430'
-
-Authors:
-    * Johnathan Andres, Mobius Logic
-    * Christina Cole, Matrix Research
-    * Joel Klipfel, Matrix Research
-Companies: [Mobius Logic](https://www.mobiuslogic.com), [Matrix Research, Inc](matrixresearch.com)
-Contact: [Joel Klipfel](mailto:joel.klipfel@matrixresearch.com)
 """
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError

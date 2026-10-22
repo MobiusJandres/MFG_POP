@@ -1,0 +1,12 @@
+{
+    "name": "FEniCSx Lab",
+    "image": "ghcr.io/fenics/dolfinx/lab:stable",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-toolsai.jupyter"
+            ]
+        }
+    }
+}

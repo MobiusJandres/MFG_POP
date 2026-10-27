@@ -1,14 +1,30 @@
 """
-Unified Plotting, RGB multi-crowd compositing, and video creation utilities.
+Unified Plotting, RGB Multi-Crowd Compositing, and Video Creation Utilities.
 
 This module provides visualization tools for Mean Field Games (MFG) simulations,
-including density evolution (m) and value function (u) from the coupled HJB-KFP
-system. Supports standalone functions and the object-oriented MFGPlotter class
-across 1-Population, 2-Population, Pursuit-Evasion scenarios with GIF, PNG, and
-MP4 export capabilities.
+including density evolution (m) and value function (u) from coupled HJB-KFP
+systems. It supports standalone functions and the object-oriented MFGPlotter class
+across 1-Population, 2-Population, and N-Population scenarios, featuring static
+dashboards, frame-by-frame PNG export, animated GIFs, and direct MP4 export.
+
+Key Visualization Components:
+------------------------------
+- Standalone Snapshot & Progression Tools: Direct inspection of (m, u) arrays
+  with obstacle overlays and lime-green door contours.
+- Perceptually Uniform Dual-Crowd RGB Compositing: Power-law alpha blending
+  (exponent 0.4) based on Stevens' power law for brightness perception. Pop 1
+  renders as red, Pop 2 as blue, and overlapping crowds blend toward purple/magenta.
+- Time-Dependent Exit Door Contours: Renders dynamic Dirichlet absorbing exit
+  boundaries (door_mask / door_mask_3d) as lime-green contour lines.
+- Saturated vs. Active Goal Styling: Reactive evading and stationary goals render
+  in cyan (#00f2fe) while active, switching to red (#ff2222) upon saturation.
+- Stable Color Scaling: Normalizes density colorbars against t = 0 maximums to
+  prevent visual washout as populations disperse across the spatial domain.
 """
+
 import os
 import glob
+from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
@@ -19,41 +35,63 @@ import numpy as np
 # =============================================================================
 
 def plot_snapshot(
-    m, u, k, Lx=50.0, Ly=50.0, Dt=0.1667, omask=None, door_mask=None,
-    m_range=(0.0, 4.0), u_range=(0.0, 500.0)
+    m,
+    u,
+    k: int,
+    Lx: float = 50.0,
+    Ly: float = 50.0,
+    Dt: float = 0.1667,
+    omask: np.ndarray | None = None,
+    door_mask: np.ndarray | None = None,
+    m_range: tuple[float, float] = (0.0, 4.0),
+    u_range: tuple[float, float] = (0.0, 500.0),
 ):
     """
-    Plots a side-by-side snapshot of density and value function at time step k.
+    Plot a side-by-side snapshot of density and value function at time step k.
 
-    Generates a dual-panel figure showing the population density (m) and value
-    function (u) at a specific time index. Includes obstacle overlays and door
-    contours if provided. Uses Gaussian interpolation for smooth visualization.
+    Generates a dual-panel figure showing the population density (m) from the
+    Fokker-Planck equation and the value function (u) from the Hamilton-Jacobi-Bellman
+    equation at a specific discrete time index. Includes semi-transparent obstacle
+    overlays and contour outlines for active exit doors.
 
-    Args:
-        m: Population density array, shape (Nt, Nx, Ny). Represents the solution
-            to the Fokker-Planck equation.
-        u: Value function array, shape (Nt, Nx, Ny). Represents the solution to
-            the Hamilton-Jacobi-Bellman equation.
-        k: Time step index to visualize (0 <= k < Nt).
-        Lx: Physical domain width in meters (default: 50.0).
-        Ly: Physical domain height in meters (default: 50.0).
-        Dt: Time step size in seconds (default: 0.1667).
-        omask: Optional obstacle mask array, shape (Nx, Ny). Values of 0 indicate
-            obstacles, 1 indicates walkable space.
-        door_mask: Optional exit door mask, shape (Nx, Ny) or (Nt, Nx, Ny). If 3D,
-            extracts time-specific slice. Doors drawn as lime contours.
-        m_range: Color scale range for density plot as (vmin, vmax) tuple.
-        u_range: Color scale range for value function plot as (vmin, vmax) tuple.
+    Parameters
+    ----------
+    m : ndarray of shape (Nt, Nx, Ny) or (Nt+1, Nx, Ny)
+        Population density array representing macroscopic crowd mass.
+    u : ndarray of shape (Nt, Nx, Ny) or (Nt+1, Nx, Ny)
+        Value function array representing the optimal cost-to-go.
+    k : int
+        Time step index to visualize (0 <= k < Nt).
+    Lx : float, default=50.0
+        Physical domain width in meters.
+    Ly : float, default=50.0
+        Physical domain height in meters.
+    Dt : float, default=0.1667
+        Time step size in seconds.
+    omask : ndarray of shape (Nx, Ny), optional
+        Binary obstacle mask array (1 = walkable space, 0 = solid obstacle).
+    door_mask : ndarray of shape (Nx, Ny) or (Nt, Nx, Ny), optional
+        Exit door mask array. If 3D, extracts the slice at time index k.
+        Active doors are rendered as lime-green contour boundaries.
+    m_range : tuple of (float, float), default=(0.0, 4.0)
+        Color scale limits (vmin, vmax) for the density subplot.
+    u_range : tuple of (float, float), default=(0.0, 500.0)
+        Color scale limits (vmin, vmax) for the value function subplot.
 
-    Returns:
-        matplotlib.figure.Figure: The generated figure with two subplots.
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The generated dual-panel figure.
 
-    Raises:
-        IndexError: If k is outside valid range [0, Nt).
+    Raises
+    ------
+    IndexError
+        If time index k is outside the valid range [0, Nt).
     """
     Nt = m.shape[0]
     if not (0 <= k < Nt):
-        raise IndexError(f"k={k} out of range for Nt={Nt}")
+        raise IndexError(f"Time index k={k} is out of range for array with Nt={Nt} slices.")
+
     current_time = k * Dt
     extent = [0, Lx, 0, Ly]
     Nx, Ny = m.shape[1], m.shape[2]
@@ -67,6 +105,7 @@ def plot_snapshot(
         vmin=m_range[0], vmax=m_range[1]
     )
     axes[0].set_title(f"Density ($m$) at $t = {current_time:.2f}$s", fontsize=14)
+    axes[0].set_facecolor('#2c3e50')
     fig.colorbar(im_m, ax=axes[0], label="Density")
 
     im_u = axes[1].imshow(
@@ -74,6 +113,7 @@ def plot_snapshot(
         vmin=u_range[0], vmax=u_range[1]
     )
     axes[1].set_title(f"Value ($u$) at $t = {current_time:.2f}$s", fontsize=14)
+    axes[1].set_facecolor('#2c3e50')
     fig.colorbar(im_u, ax=axes[1], label="Value Function")
 
     door_mask_k = door_mask[k] if (door_mask is not None and door_mask.ndim == 3) else door_mask
@@ -83,10 +123,9 @@ def plot_snapshot(
         ax.set_ylabel("Y (m)", fontsize=11)
         if omask is not None:
             obstacle_rgba = np.zeros((*omask.shape, 4))
-            # Semi-transparent black overlay for obstacles (alpha=0.75)
             obstacle_rgba[..., 3] = np.where(omask == 0, 0.75, 0.0)
             ax.imshow(obstacle_rgba.transpose(1, 0, 2), origin="lower", extent=extent)
-        if door_mask_k is not None:
+        if door_mask_k is not None and np.sum(door_mask_k) > 0:
             ax.contour(xs, ys, door_mask_k.T, levels=[0.5], colors="lime", linewidths=2)
 
     plt.tight_layout()
@@ -94,37 +133,53 @@ def plot_snapshot(
 
 
 def plot_progression(
-    data, title, cmap="magma", num_snapshots=10, Lx=50.0, Ly=50.0, Dt=0.1667,
-    omask=None, door_mask=None, data_range=(None, None)
+    data: np.ndarray,
+    title: str,
+    cmap: str = "magma",
+    num_snapshots: int = 10,
+    Lx: float = 50.0,
+    Ly: float = 50.0,
+    Dt: float = 0.1667,
+    omask: np.ndarray | None = None,
+    door_mask: np.ndarray | None = None,
+    data_range: tuple[float | None, float | None] = (None, None),
 ):
     """
-    Plots evenly spaced time progression snapshots across a simulation.
+    Plot evenly spaced temporal progression snapshots across an entire simulation.
 
-    Creates a multi-panel figure showing temporal evolution of density or value
-    function fields at uniformly spaced time indices. Useful for visualizing
-    convergence behavior and transient dynamics.
+    Creates a multi-panel figure illustrating the continuous spatial evolution of
+    density or value function fields at uniformly distributed time indices.
 
-    Args:
-        data: Array to visualize, shape (Nt, Nx, Ny). Typically density (m) or
-            value function (u) from MFG solver output.
-        title: Super-title for the figure and colorbar label.
-        cmap: Matplotlib colormap name (default: 'magma').
-        num_snapshots: Number of temporal snapshots to display. If greater than
-            Nt, will be clamped to Nt (default: 10).
-        Lx: Physical domain width in meters (default: 50.0).
-        Ly: Physical domain height in meters (default: 50.0).
-        Dt: Time step size in seconds (default: 0.1667).
-        omask: Optional obstacle mask array, shape (Nx, Ny).
-        door_mask: Optional door mask, shape (Nx, Ny) or (Nt, Nx, Ny).
-        data_range: Color scale limits as (vmin, vmax). Use (None, None) for
-            automatic scaling based on data range.
+    Parameters
+    ----------
+    data : ndarray of shape (Nt, Nx, Ny) or (Nt+1, Nx, Ny)
+        Spatiotemporal tensor to visualize (density m or value function u).
+    title : str
+        Super-title for the figure and descriptive label for the colorbar.
+    cmap : str, default='magma'
+        Matplotlib colormap identifier.
+    num_snapshots : int, default=10
+        Number of temporal snapshot panels to display across the time horizon.
+    Lx : float, default=50.0
+        Physical domain width in meters.
+    Ly : float, default=50.0
+        Physical domain height in meters.
+    Dt : float, default=0.1667
+        Discretization time step size in seconds.
+    omask : ndarray of shape (Nx, Ny), optional
+        Binary obstacle mask array (1 = walkable, 0 = solid obstacle).
+    door_mask : ndarray of shape (Nx, Ny) or (Nt, Nx, Ny), optional
+        Exit door mask rendered as lime-green contour lines.
+    data_range : tuple of (float or None, float or None), default=(None, None)
+        Color scale limits (vmin, vmax). If (None, None), automatically inferred.
 
-    Returns:
-        matplotlib.figure.Figure: The generated multi-panel figure.
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The generated multi-panel progression figure.
     """
     Nt = data.shape[0]
     num_snapshots = min(num_snapshots, Nt)
-    # Uniformly sample time indices across the entire simulation span
     indices = np.linspace(0, Nt - 1, num_snapshots, dtype=int)
     extent = [0, Lx, 0, Ly]
     Nx, Ny = data.shape[1], data.shape[2]
@@ -137,6 +192,7 @@ def plot_progression(
 
     im = None
     for ax, k in zip(axes, indices):
+        ax.set_facecolor('#2c3e50')
         im = ax.imshow(
             data[k].T, cmap=cmap, origin="lower", extent=extent, interpolation="gaussian",
             vmin=data_range[0], vmax=data_range[1]
@@ -149,7 +205,8 @@ def plot_progression(
             ax.imshow(obstacle_rgba.transpose(1, 0, 2), origin="lower", extent=extent)
         if door_mask is not None:
             door_mask_k = door_mask[k] if door_mask.ndim == 3 else door_mask
-            ax.contour(xs, ys, door_mask_k.T, levels=[0.5], colors="lime", linewidths=2)
+            if np.sum(door_mask_k) > 0:
+                ax.contour(xs, ys, door_mask_k.T, levels=[0.5], colors="lime", linewidths=2)
 
     fig.colorbar(im, ax=axes, label=title, shrink=0.7)
     fig.suptitle(title, fontsize=14, y=1.02)
@@ -163,77 +220,149 @@ def plot_progression(
 
 class MFGPlotter:
     """
-    Handles snapshot dashboards, multi-population RGB heatmaps, PNG frames, GIFs, and MP4 exports.
+    Universal Dashboard, Multi-Crowd RGB Compositor, and Video Generation Engine.
 
-    Provides object-oriented interface for visualizing 1-population or 2-population
-    MFG simulations, including pursuit-evasion scenarios. Supports static dashboards,
-    frame-by-frame PNG export, animated GIF generation, and direct MP4 video rendering.
+    Provides a complete visualization suite for Mean Field Games simulations, supporting
+    1-population traffic evacuation, 2-population competitive pursuit-evasion, and
+    arbitrary N-population swarms. Automatically detects solver structure, tracks dynamic
+    goal coordinates, and renders exit door boundaries.
 
-    Attributes:
-        Lx (float): Physical domain width in meters.
-        Ly (float): Physical domain height in meters.
-        Dt (float): Time step size in seconds.
-        Nt (int): Number of time steps in simulation.
-        M1 (np.ndarray): Population 1 density array.
-        M2 (np.ndarray or None): Population 2 density array.
-        U1 (np.ndarray): Population 1 value function array.
-        U2 (np.ndarray or None): Population 2 value function array.
-        evader_trajectories (np.ndarray or None): Evader positions for pursuit-evasion.
-        door_mask (np.ndarray or None): Time-dependent door masks, shape (Nt+1, Nx, Ny).
-        door_mask_3d (np.ndarray or None): Alias for door_mask for backward compatibility.
-        wall_mask (np.ndarray): Boolean array marking obstacle locations.
-        extent (list): Matplotlib extent [x_min, x_max, y_min, y_max].
-        goals_1 (list): List of (x, y) goal positions for population 1.
-        goals_2 (list): List of (x, y) goal positions for population 2.
+    Attributes
+    ----------
+    Lx : float
+        Physical domain width in meters.
+    Ly : float
+        Physical domain height in meters.
+    Dx : float
+        Grid cell spatial width in meters.
+    Dy : float
+        Grid cell spatial height in meters.
+    Dt : float
+        Time step increment in seconds.
+    Nt : int
+        Total number of simulation time intervals.
+    M1 : ndarray of shape (Nt+1, Nx, Ny)
+        Macroscopic density tensor for Population 1 (or primary single crowd).
+    M2 : ndarray of shape (Nt+1, Nx, Ny) or None
+        Macroscopic density tensor for Population 2 (None in 1-population runs).
+    U1 : ndarray of shape (Nt+1, Nx, Ny)
+        Value function tensor for Population 1.
+    U2 : ndarray of shape (Nt+1, Nx, Ny) or None
+        Value function tensor for Population 2 (None in 1-population runs).
+    goal_instance : Goal or None
+        Dynamic goal manager providing goal kinematics and capacity saturation flags.
+    evader_trajectories : ndarray of shape (Nt+1, G, 2) or None
+        Space-time trajectories for all G discrete goals.
+    door_mask : ndarray of shape (Nt+1, Nx, Ny) or None
+        Time-dependent exit door mask (1 = absorbing exit, 0 = walkable interior).
+    door_mask_3d : ndarray or None
+        Backward-compatible alias for door_mask.
+    wall_mask : ndarray of shape (Nx, Ny), dtype bool
+        Boolean mask where True indicates an impassable obstacle wall.
+    extent : list of float
+        Bounding box extent [0, Lx, 0, Ly] for Matplotlib imshow plotting.
+    goals_1 : list of tuple
+        Discrete static goal coordinates (x, y) assigned to Population 1.
+    goals_2 : list of tuple
+        Discrete static goal coordinates (x, y) assigned to Population 2.
     """
-    def __init__(self, pde_mesh_data_1=None, solver_instance=None, pde_mesh_data_2=None, pde_mesh_data=None):
-        """
-        Initialize MFGPlotter with mesh geometry and solver state.
 
-        Args:
-            pde_mesh_data_1: Primary mesh data object containing domain geometry (Lx, Ly),
-                spatial grid coordinates (X, Y), cell spacing (dx, dy), and goal positions.
-                If None, falls back to pde_mesh_data.
-            solver_instance: Solver object containing computed state arrays (M, U, M1, M2,
-                U1, U2), temporal parameters (Dt, Nt), obstacle mask (omask), and goal manager.
-            pde_mesh_data_2: Optional secondary mesh for 2-population simulations.
-            pde_mesh_data: Deprecated alias for pde_mesh_data_1 (backwards compatibility).
-
-        Raises:
-            ValueError: If mesh_1 or solver_instance is None.
+    def __init__(
+        self,
+        pde_mesh_data_1=None,
+        solver_instance=None,
+        pde_mesh_data_2=None,
+        pde_mesh_data=None,
+        **kwargs,
+    ):
         """
+        Initialize the universal MFGPlotter instance.
+
+        Parameters
+        ----------
+        pde_mesh_data_1 : MAP2PDE or MFGTrafficGeometry, optional
+            Primary spatial mesh containing domain dimensions, grid arrays (X, Y),
+            and obstacle masks. Falls back to pde_mesh_data if omitted.
+        solver_instance : MFGSolver, MFG2PopSolver, or MFGShadowLeaderSolver
+            Solver instance containing state tensors (M, U, M1, M2), temporal parameters,
+            door masks, and goal managers.
+        pde_mesh_data_2 : MAP2PDE, optional
+            Secondary spatial mesh for 2-population coupled games.
+        pde_mesh_data : MAP2PDE, optional
+            Backward-compatible alias for pde_mesh_data_1.
+
+        Raises
+        ------
+        ValueError
+            If neither mesh data nor a solver instance is supplied.
+        """
+        # Resolve flexible positional and keyword argument orderings
         mesh_1 = pde_mesh_data_1 if pde_mesh_data_1 is not None else pde_mesh_data
-        if mesh_1 is None or solver_instance is None:
-            raise ValueError("Must provide mesh data and solver instance to MFGPlotter.")
+        if mesh_1 is None and 'mesh' in kwargs:
+            mesh_1 = kwargs.get('mesh')
 
-        # Spatial domain dimensions and discretization steps
+        solver = solver_instance
+        mesh_2 = pde_mesh_data_2
+
+        # Handle reversed positional calls where solver was passed before mesh_2
+        if hasattr(mesh_2, 'run_picard_system') and not hasattr(solver, 'run_picard_system'):
+            solver, mesh_2 = mesh_2, solver
+
+        if mesh_1 is None and hasattr(solver, 'pde_mesh'):
+            mesh_1 = solver.pde_mesh
+        elif mesh_1 is None and hasattr(solver, 'populations') and len(solver.populations) > 0:
+            mesh_1 = solver.populations[0].mesh
+
+        if mesh_1 is None or solver is None:
+            raise ValueError("Must provide valid mesh data and solver instance to MFGPlotter.")
+
+        self.solver = solver
+        self.mesh1 = mesh_1
+        self.mesh2 = mesh_2
+
+        # Spatial domain dimensions and discretization spacings
         self.Lx, self.Ly = mesh_1.Lx, mesh_1.Ly
-        self.Dx = getattr(mesh_1, 'dx', getattr(solver_instance, 'Dx', None))
-        self.Dy = getattr(mesh_1, 'dy', getattr(solver_instance, 'Dy', None))
+        self.Dx = getattr(mesh_1, 'dx', getattr(solver, 'Dx', None))
+        self.Dy = getattr(mesh_1, 'dy', getattr(solver, 'Dy', None))
         self.X = getattr(mesh_1, 'X', None)
         self.Y = getattr(mesh_1, 'Y', None)
 
         # Temporal parameters
-        self.Dt, self.Nt = solver_instance.Dt, solver_instance.Nt
+        self.Dt, self.Nt = solver.Dt, solver.Nt
+        self.extent = [0, self.Lx, 0, self.Ly]
+        self.wall_mask = (solver.omask == 0)
 
-        # Flexible state extraction: try 2-pop fields (M1/M2) first, fall back to 1-pop (M/U)
-        self.M1 = getattr(solver_instance, 'M1', getattr(solver_instance, 'M', None))
-        self.M2 = getattr(solver_instance, 'M2', None)
-        self.U1 = getattr(solver_instance, 'U1', getattr(solver_instance, 'U', None))
-        self.U2 = getattr(solver_instance, 'U2', None)
+        # Detect single-population vs. multi-population solver structure
+        self.is_multipop = (
+            (hasattr(solver, 'populations') and len(solver.populations) > 1)
+            or (hasattr(solver, 'M2') and solver.M2 is not None)
+        )
 
-        # Goal manager and trajectory tracking
-        # self.goal_instance = getattr(solver_instance, 'goal', getattr(solver_instance, 'evader_crowd', None))
-        self.goal_instance = getattr(solver_instance, 'goal', None)
+        if self.is_multipop:
+            self.M1 = getattr(solver, 'M1', solver.populations[0].M if hasattr(solver, 'populations') else None)
+            self.M2 = getattr(solver, 'M2', solver.populations[1].M if hasattr(solver, 'populations') else None)
+            self.U1 = getattr(solver, 'U1', solver.populations[0].U if hasattr(solver, 'populations') else None)
+            self.U2 = getattr(solver, 'U2', solver.populations[1].U if hasattr(solver, 'populations') else None)
+        else:
+            self.M1 = getattr(solver, 'M', getattr(solver, 'M1', None))
+            self.M2 = None
+            self.U1 = getattr(solver, 'U', getattr(solver, 'U1', None))
+            self.U2 = None
+
+        # Goal manager and dynamic evader trajectory extraction
+        self.goal_instance = getattr(solver, 'goal', None)
+        if self.goal_instance is None and hasattr(solver, 'populations') and len(solver.populations) > 0:
+            self.goal_instance = solver.populations[0].goal
+
         self.evader_trajectories = getattr(self.goal_instance, 'Y_trajectories', None)
 
-        # Spatial masks
-        self.door_mask = getattr(solver_instance, 'door_mask', getattr(solver_instance, 'door_mask_3d', None))
+        # Door mask extraction across solver variants (traffic, evasion, multi-pop)
+        self.door_mask = getattr(solver, 'door_mask', getattr(solver, 'door_mask_3d', None))
+        if self.door_mask is None and hasattr(solver, 'populations') and len(solver.populations) > 0:
+            self.door_mask = solver.populations[0].door_mask
         self.door_mask_3d = self.door_mask
-        self.wall_mask = (solver_instance.omask == 0)
-        self.extent = [0, self.Lx, 0, self.Ly]
 
-        # Helper: extract goal positions from mesh with flexible API
+        # Helper: Extract discrete goal locations from mesh objects
         def _extract_goals(mesh):
             if mesh is None:
                 return []
@@ -244,152 +373,185 @@ class MFGPlotter:
             return []
 
         self.goals_1 = _extract_goals(mesh_1)
-        self.goals_2 = _extract_goals(pde_mesh_data_2)
+        self.goals_2 = _extract_goals(mesh_2)
 
-    def _get_spatial_frame(self, data_array, t_index):
+    def _get_spatial_frame(self, data_array: np.ndarray | None, t_index: int) -> np.ndarray | None:
         """
-        Extracts the spatial grid slice corresponding to time step t_index.
+        Extract the spatial 2D grid slice corresponding to time step t_index.
 
-        Handles multiple array storage conventions: (Nt+1, Nx, Ny), (Nx, Ny, Nt+1),
-        or static (Nx, Ny) arrays. Infers layout based on shape matching.
+        Supports time-first tensors (Nt+1, Nx, Ny), time-last tensors (Nx, Ny, Nt+1),
+        and static 2D grids (Nx, Ny).
 
-        Args:
-            data_array: Density or value function array in any supported layout.
-            t_index: Time step index to extract.
+        Parameters
+        ----------
+        data_array : ndarray or None
+            Density or value function tensor.
+        t_index : int
+            Temporal slice index to extract.
 
-        Returns:
-            np.ndarray: Spatial slice of shape (Nx, Ny), or None if data_array is None.
+        Returns
+        -------
+        spatial_slice : ndarray of shape (Nx, Ny) or None
+            Extracted 2D spatial slice.
         """
         if data_array is None:
             return None
+
         shape = data_array.shape
         Nx, Ny = self.wall_mask.shape
+
         if len(shape) == 2:
-            # Static array (no time dimension)
             return data_array
-        if shape == (self.Nt + 1, Nx, Ny):
-            # Time-first layout (common in solver output)
+        if shape == (self.Nt + 1, Nx, Ny) or shape[0] == self.Nt + 1:
             return data_array[t_index, :, :]
-        elif shape == (Nx, Ny, self.Nt + 1):
-            # Time-last layout (legacy compatibility)
+        elif shape == (Nx, Ny, self.Nt + 1) or shape[-1] == self.Nt + 1:
             return data_array[:, :, t_index]
         else:
-            # Fallback: assume first dimension is time
             return data_array[t_index]
 
-    def _draw_goals(self, ax, t_idx=0):
+    def _draw_goals(self, ax: plt.Axes, t_idx: int = 0) -> None:
         """
-        Draws static goals, dynamic door outlines, or goals on the axis.
+        Render dynamic goals, static targets, and active exit door contours.
 
-        Conditional rendering based on scenario type: evader trajectories for pursuit-
-        evasion, static goal markers for 1/2-population, or time-dependent door contours.
+        Draws:
+        1. Reactive / Evading Goals: Rendered as 'X' scatter markers. Colored cyan
+           (#00f2fe) while active, switching to red (#ff2222) when saturated.
+        2. Static Goals: Red markers for Population 1 and blue markers for Population 2.
+        3. Exit Doors (door_mask): Renders active mass-absorbing doors as lime-green contours.
 
-        Args:
-            ax: Matplotlib axis to draw on.
-            t_idx: Time index for extracting time-dependent features (default: 0).
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Target axis on which markers and contours are drawn.
+        t_idx : int, default=0
+            Time step index used to query saturation flags and door boundaries.
         """
+        # 1. Render dynamic or capacity-constrained goals
         if self.evader_trajectories is not None and self.goal_instance is not None:
             for g_idx, g_info in enumerate(self.goal_instance.goals):
                 pos = self.evader_trajectories[t_idx, g_idx]
-                is_sat = self.goal_instance.is_saturated[t_idx, g_idx] if hasattr(self.goal_instance, 'is_saturated') else False
+                is_sat = (
+                    self.goal_instance.is_saturated[t_idx, g_idx]
+                    if hasattr(self.goal_instance, 'is_saturated')
+                    else False
+                )
                 marker_color = '#ff2222' if is_sat else '#00f2fe'
 
                 ax.scatter(
                     pos[0], pos[1],
                     color=marker_color,
                     marker='X',
-                    s=80,
+                    s=85,
                     edgecolor='black',
-                    linewidth=0.8,
-                    zorder=10
+                    linewidth=1.0,
+                    zorder=10,
                 )
         else:
+            # 2. Render static goals from scenario definitions
             if self.goals_1:
                 gxs, gys = zip(*self.goals_1)
-                ax.scatter(gxs, gys, color='#ff2222', marker='X', s=70, edgecolor='white', linewidth=1.2, label='Pop 1 Goals', zorder=10)
+                ax.scatter(
+                    gxs, gys, color='#ff2222', marker='X', s=70,
+                    edgecolor='white', linewidth=1.2, label='Pop 1 Goals', zorder=10
+                )
             if self.goals_2:
                 gxs, gys = zip(*self.goals_2)
-                ax.scatter(gxs, gys, color='#2288ff', marker='X', s=70, edgecolor='white', linewidth=1.2, label='Pop 2 Goals', zorder=10)
+                ax.scatter(
+                    gxs, gys, color='#2288ff', marker='X', s=70,
+                    edgecolor='white', linewidth=1.2, label='Pop 2 Goals', zorder=10
+                )
 
-        # Draw active exit door contours if a door mask exists
-        if self.door_mask is not None and np.sum(self.door_mask[t_idx]) > 0:
-            xs = np.linspace(0, self.Lx, self.M1.shape[1])
-            ys = np.linspace(0, self.Ly, self.M1.shape[2])
-            ax.contour(xs, ys, self.door_mask[t_idx].T, levels=[0.5], colors="lime", linewidths=2)
+        # 3. Render absorbing exit doors via lime-green contour lines
+        if self.door_mask is not None:
+            dm_k = self.door_mask[t_idx] if self.door_mask.ndim == 3 else self.door_mask
+            if dm_k is not None and np.sum(dm_k) > 0:
+                Nx, Ny = dm_k.shape
+                xs = np.linspace(0, self.Lx, Nx)
+                ys = np.linspace(0, self.Ly, Ny)
+                ax.contour(xs, ys, dm_k.T, levels=[0.5], colors="lime", linewidths=2.0, zorder=8)
 
-    def _build_combined_rgb(self, m1_frame, m2_frame, m1_max, m2_max):
+    def _build_combined_rgb(
+        self,
+        m1_frame: np.ndarray,
+        m2_frame: np.ndarray,
+        m1_max: float,
+        m2_max: float,
+    ) -> np.ndarray:
         """
-        Builds a combined dual-population RGB heatmap array with power-scale alpha blending.
+        Build a combined dual-population RGB composite array using power-law alpha blending.
 
-        Uses perceptually-uniform power-law alpha scaling (exponent 0.4) based on Stevens'
-        power law for brightness perception. Densities are composited via subtractive RGB
-        blending on a white background: Population 1 controls red channel (appears red/magenta),
-        Population 2 controls blue channel (appears blue/magenta). Overlapping regions blend
-        toward magenta.
+        Applies Stevens' power law for brightness perception (exponent 0.4) to normalize
+        and blend two macroscopic densities against a near-white background:
+            - Population 1 reduces green and blue channels (appears red/coral).
+            - Population 2 reduces red and green channels (appears cyan/blue).
+            - Overlapping density regions blend toward purple/magenta.
+            - Obstacle wall cells are assigned dark slate gray [0.1725, 0.2431, 0.3137].
 
-        Mathematical approach:
-            alpha_i = (m_i / m_i_max)^0.4   # Gamma correction for perceptual uniformity
-            RGB = [1, 1, 1] - alpha_1 * [0, 0.95, 0.95] - alpha_2 * [0.95, 0.95, 0]
-            RGB[obstacles] = [0.1725, 0.2431, 0.3137]  # Dark gray
+        Parameters
+        ----------
+        m1_frame : ndarray of shape (Nx, Ny)
+            Population 1 density grid at the current time step.
+        m2_frame : ndarray of shape (Nx, Ny)
+            Population 2 density grid at the current time step.
+        m1_max : float
+            Normalization constant for Population 1 (typically max density at t = 0).
+        m2_max : float
+            Normalization constant for Population 2.
 
-        Args:
-            m1_frame: Population 1 density array, shape (Nx, Ny).
-            m2_frame: Population 2 density array, shape (Nx, Ny).
-            m1_max: Normalization constant for population 1 (typically max density at t=0).
-            m2_max: Normalization constant for population 2.
-
-        Returns:
-            np.ndarray: RGB image array, shape (Ny, Nx, 3), values in [0, 1].
+        Returns
+        -------
+        rgb : ndarray of shape (Ny, Nx, 3), dtype float64
+            Rendered RGB image array with normalized float values in [0.0, 1.0].
         """
-        # Normalize densities to [0, 1] range
         safe_m1 = np.clip(m1_frame.T / m1_max, 0.0, 1.0) if m1_max > 0 else np.zeros_like(m1_frame.T)
         safe_m2 = np.clip(m2_frame.T / m2_max, 0.0, 1.0) if m2_max > 0 else np.zeros_like(m2_frame.T)
 
-        # Apply power-law gamma correction (0.4 exponent) for perceptual uniformity
         alpha1 = safe_m1 ** 0.4
         alpha2 = safe_m2 ** 0.4
 
-        # Initialize with near-white background (0.95 to avoid harsh pure white)
         Ny, Nx = alpha1.shape
-        rgb = np.ones((Ny, Nx, 3)) * 0.95
+        rgb = np.ones((Ny, Nx, 3), dtype=np.float64) * 0.95
 
-        # Subtractive blending: Pop 1 reduces green/blue (→ red), Pop 2 reduces red/green (→ blue)
+        # Subtractive channel modulation
         rgb[:, :, 1] -= alpha1 * 0.95
         rgb[:, :, 2] -= alpha1 * 0.95
         rgb[:, :, 0] -= alpha2 * 0.95
         rgb[:, :, 1] -= alpha2 * 0.95
 
-        # Clamp to valid RGB range and apply wall mask
         rgb = np.clip(rgb, 0.0, 1.0)
         rgb[self.wall_mask.T] = [0.1725, 0.2431, 0.3137]
         return rgb
 
-    def plot_snapshots(self, output_file="Output/dashboard_snapshots.png"):
+    def plot_snapshots(self, output_file: str = "Output/dashboard_snapshots.png") -> None:
         """
-        Generates snapshot dashboard (1x3 panel for 2-Pop, 2x2 panel for 1-Pop).
+        Generate and export a multi-panel simulation snapshot dashboard.
 
-        Creates a multi-panel figure showing simulation state at key time points (start,
-        midpoint, end). For 2-population scenarios, displays RGB composite density heatmaps.
-        For 1-population, shows density evolution and initial value function.
+        Layout Adaptations:
+        - Two-Population Simulations: Produces a 1x3 horizontal layout depicting Start (t=0),
+          Midpoint (t=T/2), and End (t=T) using power-law RGB crowd compositing.
+        - Single-Population Simulations: Produces a 2x2 dashboard displaying:
+            * Top-Left: Initial Density M(0, x, y).
+            * Top-Right: Midpoint Density M(T/2, x, y).
+            * Bottom-Left: Final Density M(T, x, y).
+            * Bottom-Right: Initial Value Function U(0, x, y).
 
-        Uses stable color scaling: computes vmax from t=0 frame to prevent color washout
-        as density disperses over time. This preserves visual contrast throughout the
-        simulation.
+        Color Scale Stability:
+        Colorbar upper bounds (vmax) are anchored to density at t = 0 to prevent visual
+        washout as crowd mass diffuses or exits across time.
 
-        Args:
-            output_file: Path to save PNG dashboard (default: 'Output/dashboard_snapshots.png').
+        Parameters
+        ----------
+        output_file : str, default='Output/dashboard_snapshots.png'
+            Destination file path for the exported PNG image.
         """
-        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
         t0, t_mid, t_end = 0, self.Nt // 2, self.Nt
 
-        # Calculate stable vmax from initial t=0 frame to preserve vibrant colors
-        # (density typically decreases as population disperses toward goals)
         m0_frame = self._get_spatial_frame(self.M1, t0)
         m0_masked = np.ma.masked_where(self.wall_mask, m0_frame)
         stable_vmax = np.max(m0_masked) if np.max(m0_masked) > 0 else 1.0
 
-        if self.M2 is not None:
-            # Two-population scenario: RGB composite visualization
+        if self.is_multipop and self.M2 is not None:
             fig, axes = plt.subplots(1, 3, figsize=(18, 6))
             m2_0_frame = self._get_spatial_frame(self.M2, t0)
             m2_0_masked = np.ma.masked_where(self.wall_mask, m2_0_frame)
@@ -397,78 +559,99 @@ class MFGPlotter:
 
             def _style_2pop_axis(ax, title, rgb_img, t_idx):
                 ax.set_facecolor('#2c3e50')
-                ax.set_title(title)
-                ax.set_xlabel("X (meters)")
-                ax.set_ylabel("Y (meters)")
+                ax.set_title(title, fontsize=12)
+                ax.set_xlabel("X (meters)", fontsize=10)
+                ax.set_ylabel("Y (meters)", fontsize=10)
                 ax.imshow(rgb_img, origin='lower', extent=self.extent, interpolation='nearest')
                 self._draw_goals(ax, t_idx)
 
-            rgb0 = self._build_combined_rgb(self._get_spatial_frame(self.M1, t0), self._get_spatial_frame(self.M2, t0), stable_vmax, m2_max)
-            rgbMid = self._build_combined_rgb(self._get_spatial_frame(self.M1, t_mid), self._get_spatial_frame(self.M2, t_mid), stable_vmax, m2_max)
-            rgbEnd = self._build_combined_rgb(self._get_spatial_frame(self.M1, t_end), self._get_spatial_frame(self.M2, t_end), stable_vmax, m2_max)
+            rgb0 = self._build_combined_rgb(
+                self._get_spatial_frame(self.M1, t0),
+                self._get_spatial_frame(self.M2, t0),
+                stable_vmax, m2_max
+            )
+            rgbMid = self._build_combined_rgb(
+                self._get_spatial_frame(self.M1, t_mid),
+                self._get_spatial_frame(self.M2, t_mid),
+                stable_vmax, m2_max
+            )
+            rgbEnd = self._build_combined_rgb(
+                self._get_spatial_frame(self.M1, t_end),
+                self._get_spatial_frame(self.M2, t_end),
+                stable_vmax, m2_max
+            )
 
             _style_2pop_axis(axes[0], "Start ($t=0$)", rgb0, t0)
-            _style_2pop_axis(axes[1], f"Midpoint ($t={self.Dt * t_mid:.1f}s$)", rgbMid, t_mid)
-            _style_2pop_axis(axes[2], f"End ($t={self.Dt * t_end:.1f}s$)", rgbEnd, t_end)
+            _style_2pop_axis(axes[1], f"Midpoint ($t={self.Dt * t_mid:.1f}$s)", rgbMid, t_mid)
+            _style_2pop_axis(axes[2], f"End ($t={self.Dt * t_end:.1f}$s)", rgbEnd, t_end)
             axes[0].legend(loc='upper right')
         else:
-            # Single-population scenario: density + value function visualization
             fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
             def _style_1pop_axis(ax, title, im, t_idx):
                 ax.set_facecolor('#2c3e50')
-                ax.set_title(title)
-                ax.set_xlabel("X (meters)")
-                ax.set_ylabel("Y (meters)")
-                fig.colorbar(im, ax=ax, label='Value')
+                ax.set_title(title, fontsize=12)
+                ax.set_xlabel("X (meters)", fontsize=10)
+                ax.set_ylabel("Y (meters)", fontsize=10)
+                fig.colorbar(im, ax=ax, label='Magnitude')
                 self._draw_goals(ax, t_idx)
 
-            im1 = axes[0, 0].imshow(m0_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax)
+            im1 = axes[0, 0].imshow(
+                m0_masked.T, origin='lower', extent=self.extent,
+                cmap='YlOrRd', vmin=0, vmax=stable_vmax
+            )
             _style_1pop_axis(axes[0, 0], "Initial Density $M$ ($t=0$)", im1, t0)
 
             mmid_frame = self._get_spatial_frame(self.M1, t_mid)
             mmid_masked = np.ma.masked_where(self.wall_mask, mmid_frame)
-            im2 = axes[0, 1].imshow(mmid_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax)
-            _style_1pop_axis(axes[0, 1], f"Midpoint Density $M$ ($t={self.Dt * t_mid:.1f}s$)", im2, t_mid)
+            im2 = axes[0, 1].imshow(
+                mmid_masked.T, origin='lower', extent=self.extent,
+                cmap='YlOrRd', vmin=0, vmax=stable_vmax
+            )
+            _style_1pop_axis(axes[0, 1], f"Midpoint Density $M$ ($t={self.Dt * t_mid:.1f}$s)", im2, t_mid)
 
             mend_frame = self._get_spatial_frame(self.M1, t_end)
             mend_masked = np.ma.masked_where(self.wall_mask, mend_frame)
-            im3 = axes[1, 0].imshow(mend_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax)
-            _style_1pop_axis(axes[1, 0], f"Final Density $M$ ($t={self.Dt * t_end:.1f}s$)", im3, t_end)
+            im3 = axes[1, 0].imshow(
+                mend_masked.T, origin='lower', extent=self.extent,
+                cmap='YlOrRd', vmin=0, vmax=stable_vmax
+            )
+            _style_1pop_axis(axes[1, 0], f"Final Density $M$ ($t={self.Dt * t_end:.1f}$s)", im3, t_end)
 
             u0_frame = self._get_spatial_frame(self.U1, t0)
             u0_masked = np.ma.masked_where(self.wall_mask, u0_frame)
-            im4 = axes[1, 1].imshow(u0_masked.T, origin='lower', extent=self.extent, cmap='viridis_r')
+            im4 = axes[1, 1].imshow(
+                u0_masked.T, origin='lower', extent=self.extent,
+                cmap='viridis_r'
+            )
             _style_1pop_axis(axes[1, 1], "Value Function $U$ ($t=0$)", im4, t0)
-
-            axes[0, 0].legend(loc='upper right')
 
         plt.tight_layout()
         plt.savefig(output_file, dpi=150)
         print(f"--> Saved snapshot dashboard to '{output_file}'", flush=True)
         plt.close(fig)
 
-    def save_density_frames(self, output_dir="mfg_simulation_frames"):
+    def save_density_frames(self, output_dir: str = "mfg_simulation_frames") -> None:
         """
-        Saves individual PNG frames across all time steps using t=0 stable color scaling.
+        Export individual PNG heatmap frames for all simulation time steps.
 
-        Exports Nt+1 individual PNG files (frame_000.png, frame_001.png, ...) for each
-        time step in the simulation. Uses t=0 density maximum for color scale normalization
-        to maintain consistent visual appearance across frames. Frame naming uses zero-
-        padded 3-digit numbering for proper lexicographic ordering.
+        Generates Nt+1 sequentially numbered PNG images (frame_000.png, frame_001.png, ...)
+        suitable for video compiling or presentation inspection. Normalizes density using
+        initial t = 0 maxima, renders walls in dark slate gray, and renders door outlines.
 
-        Args:
-            output_dir: Directory path for frame output (default: 'mfg_simulation_frames').
+        Parameters
+        ----------
+        output_dir : str, default='mfg_simulation_frames'
+            Directory path where generated PNG frames are stored.
         """
-        os.makedirs(output_dir, exist_ok=True)
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
         print(f"Exporting animation PNG frames to './{output_dir}'...", flush=True)
 
-        # Compute stable color scale from t=0 to avoid washed-out appearance
         m1_0_frame = self._get_spatial_frame(self.M1, 0)
         m1_0_masked = np.ma.masked_where(self.wall_mask, m1_0_frame)
         stable_vmax1 = np.max(m1_0_masked) if np.max(m1_0_masked) > 0 else 1.0
 
-        if self.M2 is not None:
+        if self.is_multipop and self.M2 is not None:
             m2_0_frame = self._get_spatial_frame(self.M2, 0)
             m2_0_masked = np.ma.masked_where(self.wall_mask, m2_0_frame)
             stable_vmax2 = np.max(m2_0_masked) if np.max(m2_0_masked) > 0 else 1.0
@@ -478,14 +661,17 @@ class MFGPlotter:
             ax.set_facecolor('#2c3e50')
 
             m1_frame = self._get_spatial_frame(self.M1, k)
-            if self.M2 is not None:
+            if self.is_multipop and self.M2 is not None:
                 m2_frame = self._get_spatial_frame(self.M2, k)
                 rgb_img = self._build_combined_rgb(m1_frame, m2_frame, stable_vmax1, stable_vmax2)
                 ax.imshow(rgb_img, origin='lower', extent=self.extent, interpolation='nearest')
                 ax.set_title(f"Pop 1 (Red) & Pop 2 (Blue) - Time: {k * self.Dt:.2f}s")
             else:
                 m_masked = np.ma.masked_where(self.wall_mask, m1_frame)
-                im = ax.imshow(m_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax1)
+                im = ax.imshow(
+                    m_masked.T, origin='lower', extent=self.extent,
+                    cmap='YlOrRd', vmin=0, vmax=stable_vmax1
+                )
                 fig.colorbar(im, ax=ax, label='Density')
                 ax.set_title(f"Crowd Density - Time: {k * self.Dt:.2f}s")
 
@@ -498,52 +684,60 @@ class MFGPlotter:
 
         print(f"Successfully exported {self.Nt + 1} frames to '{output_dir}'.", flush=True)
 
-    def create_movie(self, frame_dir="mfg_simulation_frames", output_file="Output/mfg_simulation.gif", fps=15):
+    def create_movie(
+        self,
+        frame_dir: str = "mfg_simulation_frames",
+        output_file: str = "Output/mfg_simulation.gif",
+        fps: int = 15,
+    ) -> None:
         """
-        Compiles frame sequence into an animated GIF file.
+        Compile an exported sequence of PNG frames into an animated GIF.
 
-        Reads PNG frames from frame_dir (must be named frame_NNN.png with zero-padded
-        indices) and assembles them into an animated GIF using PIL. Frame duration is
-        computed from fps parameter.
+        Scans frame_dir for files matching 'frame_*.png' and stitches them in lexicographical
+        order into a looping animated GIF using PIL.
 
-        Args:
-            frame_dir: Directory containing input PNG frames (default: 'mfg_simulation_frames').
-            output_file: Path for output GIF file (default: 'Output/mfg_simulation.gif').
-            fps: Frame rate in frames per second (default: 15). Duration per frame = 1000/fps ms.
-
-        Note:
-            Requires PIL (Pillow) library. If no frames found, prints warning and returns.
+        Parameters
+        ----------
+        frame_dir : str, default='mfg_simulation_frames'
+            Directory containing the source PNG frames.
+        output_file : str, default='Output/mfg_simulation.gif'
+            Destination file path for the compiled GIF.
+        fps : int, default=15
+            Animation playback frame rate in frames per second.
         """
         frame_files = sorted(glob.glob(f"{frame_dir}/frame_*.png"))
         if not frame_files:
-            print(f"No frames found in '{frame_dir}' to compile.", flush=True)
+            print(f"No frames found in '{frame_dir}' to compile into GIF.", flush=True)
             return
 
         from PIL import Image
         frames = [Image.open(f) for f in frame_files]
-        frames[0].save(output_file, save_all=True, append_images=frames[1:], duration=int(1000 / fps), loop=0)
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+        frames[0].save(
+            output_file,
+            save_all=True,
+            append_images=frames[1:],
+            duration=int(1000 / fps),
+            loop=0,
+        )
         print(f"--> Successfully created GIF animation: '{output_file}'", flush=True)
 
-    def save_mp4(self, filename="Output/mfg_simulation.mp4", fps=15):
+    def save_mp4(self, filename: str = "Output/mfg_simulation.mp4", fps: int = 15) -> None:
         """
-        Compiles simulation directly into an MP4 video file using FFmpeg.
+        Compile the simulation directly into an MP4 video file using FFmpeg.
 
-        Generates MP4 video directly from simulation state arrays without intermediate
-        PNG frame storage. Uses matplotlib.animation.FuncAnimation with FFmpeg writer.
-        Falls back to GIF via create_movie() if FFmpeg is unavailable.
+        Generates an MP4 video directly from memory using matplotlib.animation.FuncAnimation
+        without requiring disk storage of intermediate PNG files. Incorporates stable color
+        scaling, dynamic goal positions, and exit door contours.
 
-        The update function is a closure that captures stable color scaling parameters
-        (vmax from t=0) and efficiently updates only image data, not the entire plot.
-
-        Args:
-            filename: Path for output MP4 file (default: 'Output/mfg_simulation.mp4').
-            fps: Frame rate in frames per second (default: 15).
-
-        Note:
-            Requires FFmpeg installed and accessible in system PATH. If FFmpeg fails,
-            prints notice and user should call create_movie() for GIF fallback.
+        Parameters
+        ----------
+        filename : str, default='Output/mfg_simulation.mp4'
+            Destination file path for the exported MP4 video.
+        fps : int, default=15
+            Playback frame rate in frames per second.
         """
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        Path(filename).parent.mkdir(parents=True, exist_ok=True)
         print(f"Exporting MP4 video directly to '{filename}'...", flush=True)
 
         fig, ax = plt.subplots(figsize=(6, 5), layout='constrained')
@@ -553,17 +747,19 @@ class MFGPlotter:
         m1_0_masked = np.ma.masked_where(self.wall_mask, m1_0_frame)
         stable_vmax1 = np.max(m1_0_masked) if np.max(m1_0_masked) > 0 else 1.0
 
-        if self.M2 is not None:
+        if self.is_multipop and self.M2 is not None:
             m2_0_frame = self._get_spatial_frame(self.M2, 0)
             m2_0_masked = np.ma.masked_where(self.wall_mask, m2_0_frame)
             stable_vmax2 = np.max(m2_0_masked) if np.max(m2_0_masked) > 0 else 1.0
 
-            rgb_img = self._build_combined_rgb(self._get_spatial_frame(self.M1, 0), self._get_spatial_frame(self.M2, 0), stable_vmax1, stable_vmax2)
+            rgb_img = self._build_combined_rgb(m1_0_frame, m2_0_frame, stable_vmax1, stable_vmax2)
             im = ax.imshow(rgb_img, origin='lower', extent=self.extent, interpolation='nearest')
             title = ax.set_title("Pop 1 (Red) & Pop 2 (Blue) - Time: 0.00s")
         else:
-            m_masked = np.ma.masked_where(self.wall_mask, m1_0_frame)
-            im = ax.imshow(m_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax1)
+            im = ax.imshow(
+                m1_0_masked.T, origin='lower', extent=self.extent,
+                cmap='YlOrRd', vmin=0, vmax=stable_vmax1
+            )
             fig.colorbar(im, ax=ax, label='Density')
             title = ax.set_title("Density - Time: 0.00s")
 
@@ -571,10 +767,9 @@ class MFGPlotter:
         ax.set_xlabel("X (meters)")
         ax.set_ylabel("Y (meters)")
 
-        # Animation update closure: efficiently updates only image data per frame
         def update(k):
             m1_k = self._get_spatial_frame(self.M1, k)
-            if self.M2 is not None:
+            if self.is_multipop and self.M2 is not None:
                 m2_k = self._get_spatial_frame(self.M2, k)
                 new_rgb = self._build_combined_rgb(m1_k, m2_k, stable_vmax1, stable_vmax2)
                 im.set_data(new_rgb)
@@ -590,7 +785,6 @@ class MFGPlotter:
             ani.save(filename, writer='ffmpeg', fps=fps, dpi=150)
             print(f"--> Successfully exported MP4 video to '{filename}'.", flush=True)
         except Exception as e:
-            # FFmpeg missing or incompatible: inform user of GIF alternative
             print(f"Notice: Could not save MP4 via FFmpeg ({e}). Fallback to GIF via create_movie().", flush=True)
         finally:
             plt.close(fig)

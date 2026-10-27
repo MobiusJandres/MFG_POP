@@ -86,17 +86,16 @@ def main():
     # STEP 1: Argument Parsing and Configuration
     # ============================================================================
     options = Options()
-    options.parser.set_defaults(config='configs/pursuit_evasion.yml')
+    options.parser.set_defaults(config='configs/map_simulation.yml')
 
-    # Add pursuit-evasion specific arguments
-    options.parser.add_argument('--goals', default=None, nargs='*', help='Goal dictionaries or coordinates')
-    options.parser.add_argument('--goals_are_exits', action='store_true', default=False, help='If True, goals act as exits')
-
-    # Negative obstacle penalty creates repulsion barriers (contrast with positive penalties in traffic scenarios)    
-    options.parser.add_argument('--obstacle_penalty', type=float, default=-500.0, help='Obstacle cell potential penalty')
-
-    # Running cost balances goal-seeking vs congestion-avoidance behavior
-    options.parser.add_argument('--running_cost_weight', type=float, default=0.01, help='Running cost scaling weight')
+    # Scenario-specific arguments
+    options.parser.add_argument('--goals', default=None, nargs='*', help='Goal dictionaries or coordinates.')
+    options.parser.add_argument('--goals_are_exits', action='store_true', default=False, help='If True, active goals act as absorbing exits.')
+    options.parser.add_argument('--obstacle_penalty', type=float, default=-500.0, help='Obstacle cell potential penalty.')
+    options.parser.add_argument('--running_cost_weight', type=float, default=0.01, help='Running cost scaling weight w_R.')
+    options.parser.add_argument('--terminal_cost_weight', type=float, default=None, help='Terminal cost scaling weight w_T (defaults to w_R if None).')
+    options.parser.add_argument('--running_cost_power', type=int, default=2, help='Exponent p_R for running distance cost.')
+    options.parser.add_argument('--terminal_cost_power', type=int, default=2, help='Exponent p_T for terminal distance cost.')
 
     args = options.parseArgs()
     print(f"Results will be saved to: {args.save_dir}", flush=True)
@@ -120,7 +119,7 @@ def main():
                 goal_configs.append(g)
             elif isinstance(g, (list, tuple)):
                 # Legacy format: assume [x, y] coordinates, default to evader with v_max=15.0
-                goal_configs.append({'type': 'evader', 'position': [float(g[0]), float(g[1])], 'v_max': 15.0})
+                goal_configs.append({'type': 'evader', 'position': [float(g[0]), float(g[1])], 'v_max': args.v_max_evader})
 
     # Build PDE mesh from spatial domain specification
     # MAP2PDE handles: obstacle masks, door/exit locations, initial agent placement
@@ -149,9 +148,9 @@ def main():
         goals_are_exits=args.goals_are_exits,                             # Exit mode vs potential well mode
         obstacle_penalty=args.obstacle_penalty,                           # Negative for repulsion barriers
         running_cost_weight=args.running_cost_weight,                     # Congestion sensitivity scaling
-        terminal_cost_weight=getattr(args, 'terminal_cost_weight', None), 
-        running_cost_power=getattr(args, 'running_cost_power', 2),
-        terminal_cost_power=getattr(args, 'terminal_cost_power', 2),
+        terminal_cost_weight=args.terminal_cost_weight,
+        running_cost_power=args.running_cost_power,
+        terminal_cost_power=args.terminal_cost_power,
         saturated_goal_penalty=args.saturated_goal_penalty,                # Saturated goal repulsion penalty
     )
 
@@ -181,7 +180,7 @@ def main():
     animation_path = args.save_dir / "pursuit_evasion.gif"
     plotter.create_movie(frame_dir=str(frames_dir), output_file=str(animation_path), fps=15)
 
-    print("Run completed successfully!", flush=True)
+    print("Pursuit-Evasion run completed successfully!", flush=True)
 
 # Script entry point: execute main() when run directly (not imported as module)
 if __name__ == "__main__":

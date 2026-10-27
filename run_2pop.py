@@ -77,14 +77,14 @@ See Also
 """
 # Import section
 import logging
-from args.Options import Options  # Command-line argument parsing and config file loading
-from mfgames.geometry import MAP2PDE  # Spatial mesh construction and geometry handling
-from mfgames.problem import MFG2PopSolver  # Coupled 2-population MFG solver (Picard iteration)
-from mfgames.plotting import MFGPlotter  # Visualization tools for density/value function output
+from args.Options import Options
+from mfgames.geometry import MAP2PDE
+from mfgames.problem import MFG2PopSolver, MFGShadowLeaderSolver, Population
+from mfgames.plotting import MFGPlotter
 
 
 def main():
-    """
+        """
     Execute a full 2-population Mean Field Game simulation workflow.
 
     This function orchestrates the complete simulation pipeline from configuration
@@ -166,6 +166,7 @@ def main():
         If Picard iteration fails to converge within max_iters (logged, not raised).
     """
     options = Options()
+    options.parser.set_defaults(config='configs/mfg_2pop.yml')
 
     # ========================================================================
     # STEP 1: Argument Parsing and Configuration Loading
@@ -173,14 +174,14 @@ def main():
     # Extend the base Options parser with 2-population-specific command-line
     # arguments. This allows overriding YAML config values for initial conditions
     # and goals on a per-run basis without editing config files.
-    options.parser.set_defaults(config='configs/mfg_2pop.yml')
     options.parser.add_argument('--pop1_blobs', default=None, nargs='*', help='Population 1 blobs [[x, y, sigma, amp], ...]')
     options.parser.add_argument('--pop2_blobs', default=None, nargs='*', help='Population 2 blobs [[x, y, sigma, amp], ...]')
     options.parser.add_argument('--pop1_goals', default=None, nargs='*', help='Population 1 custom goals [[x, y], ...]')
     options.parser.add_argument('--pop2_goals', default=None, nargs='*', help='Population 2 custom goals [[x, y], ...]')
+    options.parser.add_argument('--shadow_leader', action='store_true', default=False, help='If True, solve via Shadow-Leader best response instead of coupled Nash.')
 
     args = options.parseArgs()
-    logging.info(f"Results will be saved to: {args.save_dir}", flush=True)
+    logging.info(f"Results will be saved to: {args.save_dir}")
 
     # Extract optional map/scenario file paths for obstacle geometry
     map_str = str(args.map_file) if getattr(args, 'map_file', None) else None
@@ -196,19 +197,19 @@ def main():
     # - Independent initial density distributions
     # - Potential future extensions: different diffusion coefficients or obstacle maps
     mesh_pop1 = MAP2PDE(
-        map_filepath=map_str,
-        scen_filepath=scen_str,
-        Lx=args.room_width,
-        Ly=args.room_height,
-        Nx=args.Nx,
+        map_filepath=map_str, 
+        scen_filepath=scen_str, 
+        Lx=args.room_width, 
+        Ly=args.room_height, 
+        Nx=args.Nx, 
         Ny=args.Ny
     )
     mesh_pop2 = MAP2PDE(
-        map_filepath=map_str,
-        scen_filepath=scen_str,
-        Lx=args.room_width,
-        Ly=args.room_height,
-        Nx=args.Nx,
+        map_filepath=map_str, 
+        scen_filepath=scen_str, 
+        Lx=args.room_width, 
+        Ly=args.room_height, 
+        Nx=args.Nx, 
         Ny=args.Ny
     )
 
@@ -256,7 +257,7 @@ def main():
     #   avoiding pursuers.
     pop1_goals = getattr(args, 'pop1_goals', []) or []
     pop2_goals = getattr(args, 'pop2_goals', None) or [(400.0, 700.0)]
-
+    
     mesh_pop1.set_custom_goals(pop1_goals)
     mesh_pop2.set_custom_goals(pop2_goals)
 
@@ -276,13 +277,26 @@ def main():
     # - theta=1.0: No relaxation (full update each iteration, may diverge)
     # - theta<1.0: Blend old and new solutions for stability
     # Typical range: 0.5-0.9 for pursuit-evasion, 0.9-1.0 for simple traffic
-    solver = MFG2PopSolver(
-        pde_mesh_data_1=mesh_pop1,
-        pde_mesh_data_2=mesh_pop2,
-        T=args.T,
-        Nt=args.Nt,
-        thetaUM=args.relaxation_theta
-    )
+    if args.shadow_leader:
+        logging.info("Executing Shadow-Leader (Stackelberg) Solver...")
+        pop1 = Population(name="pursuers_leader", mesh=mesh_pop1, m0=mesh_pop1.build_initial_density(sigma_multiplier=3), stencil_mode=1, obstacle_penalty=-500.0)
+        pop2 = Population(name="evaders_follower", mesh=mesh_pop2, m0=mesh_pop2.build_initial_density(sigma_multiplier=3), stencil_mode=1, obstacle_penalty=-500.0)
+        solver = MFGShadowLeaderSolver(
+            populations=[pop1, pop2],
+            leader_indices=[0],
+            T=args.T,
+            Nt=args.Nt,
+            thetaUM=args.relaxation_theta,
+        )
+    else:
+        logging.info("Executing Fully Coupled Nash Solver (MFG2PopSolver)...")
+        solver = MFG2PopSolver(
+            pde_mesh_data_1=mesh_pop1,
+            pde_mesh_data_2=mesh_pop2,
+            T=args.T,
+            Nt=args.Nt,
+            thetaUM=args.relaxation_theta,
+        )
     # Run Picard iteration until convergence or max_iters reached. Convergence
     # diagnostics (L2 error norms) are printed to stdout during execution.
     solver.run_picard_system(max_iters=args.max_iters)
@@ -293,7 +307,7 @@ def main():
     # Create a plotter instance with access to both population mesh data and the
     # solved system. The plotter generates multi-population visualizations showing
     # density and value function evolution for both populations simultaneously.
-    plotter = MFGPlotter(mesh_pop1, solver, mesh_pop2)
+    plotter = MFGPlotter(pde_mesh_data_1=mesh_pop1, solver_instance=solver, pde_mesh_data_2=mesh_pop2)
 
     # Generate static dashboard: 5 time snapshots (t=0, T/4, T/2, 3T/4, T) with
     # 4 subplots each (Pop1 density, Pop1 value, Pop2 density, Pop2 value)
@@ -310,8 +324,7 @@ def main():
     animation_path = args.save_dir / "mfg_2pop_simulation.mp4"
     plotter.save_mp4(filename=str(animation_path), fps=30)
 
-    logging.info("2-Population run completed successfully!", flush=True)
-
+    logging.info("2-Population run completed successfully!")
 
 # Script entry point: Execute main() when run directly (not imported as module)
 if __name__ == "__main__":

@@ -1,0 +1,235 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{bm}
+\usepackage{verbatim}
+
+\title{\textbf{A Generalized Multi-Population Mean Field Game Framework for Crowd Navigation, Team Dynamics, and Dynamic Goal Evasion}}
+\author{\textbf{Mathematical Formulation, Optimal Control Theory, \& Algorithmic Resolution}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document establishes a comprehensive mathematical framework for modeling the interaction between $N$ continuum populations of minor players (crowds) and dynamic major players (evading or capacity-constrained goals) within a bounded spatial domain containing obstacles. We present both the continuous optimal control formulation via Pontryagin's Maximum Principle (PMP) and the numerical discretization realized in the \texttt{mfgames} library. The system couples backward Hamilton-Jacobi-Bellman (HJB) equations under decoupled running and terminal costs, forward Kolmogorov-Fokker-Planck (KFP) equations modeling crowd transport, and adjoint costate differential equations governing optimal evasion. Furthermore, we parameterize adversarial, allied, and neutral crowd interactions via interaction and cross-congestion matrices, detail multi-crowd capacity saturation, and formulate an extended Picard fixed-point scheme with post-saturation trajectory clamping.
+\end{abstract}
+
+\section{Introduction \& Domain Configuration}
+Let $\Omega \subset \mathbb{R}^2$ be a bounded spatial domain with obstacle boundary $\Gamma_{\text{wall}}$ enforcing zero-flux Neumann conditions and time-dependent exit boundaries $\Gamma_{\text{door}, p}(t)$ designated for each crowd population $p \in \{1, \dots, N\}$. The temporal horizon is $t \in [0, T]$.
+
+The system comprises two classes of entities:
+\begin{enumerate}
+    \item \textbf{Minor Players ($N$ Crowds):} A continuum of $N$ statistically identical agent populations, where each crowd $p \in \{1, \dots, N\}$ has macroscopic spatial density $m_p(t, x) \ge 0$ satisfying $\int_\Omega m_p(t, x) \, dx \le M_{0, p}$.
+    \item \textbf{Major Players (Goals):} A discrete collection of $G$ goal objects $\{y_g(t)\}_{g=1}^G \subset \Omega$. Goals may be stationary landing pads, prescribed parametric trajectories, or strategic reactive agents actively evading crowd density. Goals may also possess finite capacity ceilings $C_{\text{max}, g}$ shared across teams or allocated exclusively.
+\end{enumerate}
+
+\section{Minor Player (Crowd) Dynamics}
+
+Each individual in population $p \in \{1, \dots, N\}$ chooses a drift velocity $\mathbf{v}_p(t)$ to minimize a decoupled spatio-temporal cost functional:
+\begin{equation}
+J_p(x) = \int_0^T \left( f_p(x(t), t) + C_{\text{inter}, p}(m_1, \dots, m_N) + \frac{1}{2} |\mathbf{v}_p(t)|^2 \right) dt + g_p(x(T)),
+\end{equation}
+where $f_p(x, t)$ is the running distance cost, $g_p(x)$ is the terminal boundary cost, and $C_{\text{inter}, p}$ models inter-crowd strategic interactions.
+
+\subsection{Coupled Hamilton-Jacobi-Bellman (HJB) Equations}
+The value function $u_p(t, x)$ of population $p$ satisfies the backward-in-time HJB equation:
+\begin{equation}
+\label{eq:hjb_npop}
+-\frac{\partial u_p}{\partial t} - \nu \Delta u_p + H_p(x, m_1, \dots, m_N, \nabla u_p) = f_p(x, t) + C_{\text{inter}, p}(m_1, \dots, m_N),
+\end{equation}
+for $(t, x) \in (0, T) \times \Omega$, subject to terminal condition $u_p(T, x) = g_p(x)$ and Dirichlet boundary condition $u_p(t, x) = 0$ on active exit regions $x \in \Gamma_{\text{door}, p}(t)$.
+
+The multi-crowd Hamiltonian $H_p$ incorporates mobility reduction from both internal and cross-population density:
+\begin{equation}
+H_p(x, m_1, \dots, m_N, \nabla u_p) = -\frac{\alpha}{1 + m_p + \sum_{q \neq p} W_{pq}^{\text{cong}} m_q} |\nabla u_p|^2 + h_0,
+\end{equation}
+where $\mathbf{W}^{\text{cong}} \in \mathbb{R}^{N \times N}$ is the cross-congestion matrix, and $\alpha, h_0 > 0$.
+
+\subsection{Decoupled Objective Functionals}
+Let $\mathcal{A}_p(t) \subseteq \{1, \dots, G\}$ denote the active, unsaturated goals assigned to population $p$ at time $t$.
+\begin{enumerate}
+    \item \textbf{Running Cost $f_p(x, t)$ ($t < T$):}
+    \begin{equation}
+    f_p(x, t) = w_{R, p} \min_{g \in \mathcal{A}_p(t)} \|x - y_g(t)\|^{p_{R, p}} + S_p(x, t),
+    \end{equation}
+    where $w_{R, p} \ge 0$ is the running weight, $p_{R, p} \in \{1, 2\}$ is the distance exponent, and $S_p(x, t)$ is an optional repulsive barrier around saturated goals:
+    \begin{equation}
+    S_p(x, t) = w_{\text{sat}, p} \sum_{g \notin \mathcal{A}_p(t)} \exp\left( -\frac{\|x - y_g(t)\|^2}{2 \sigma_{\text{sat}}^2} \right).
+    \end{equation}
+    \item \textbf{Terminal Cost $g_p(x)$ ($t = T$):}
+    \begin{equation}
+    g_p(x) = u_p(T, x) = w_{T, p} \min_{g \in \mathcal{A}_p(T)} \|x - y_g(T)\|^{p_{T, p}},
+    \end{equation}
+    with independent terminal weight $w_{T, p} \in \mathbb{R}$ and exponent $p_{T, p} \in \{1, 2\}$.
+\end{enumerate}
+
+\subsection{Inter-Crowd Strategic Relations}
+The strategic interaction cost $C_{\text{inter}, p}$ couples population $p$ to all other crowd densities:
+\begin{equation}
+C_{\text{inter}, p}(m_1, \dots, m_N) = \sum_{q=1}^N W_{pq}^{\text{inter}} m_q(t, x) + \left[ \sum_{q=1}^N m_q(t, x) - m_{\text{cap}} \right]_+,
+\end{equation}
+where $\mathbf{W}^{\text{inter}} \in \mathbb{R}^{N \times N}$ is the interaction matrix and $m_{\text{cap}}$ is an aggregate congestion threshold.
+
+\subsubsection{Relational Taxonomy}
+\begin{itemize}
+    \item \textbf{Adversarial Pairs (Pursuit-Evasion):} Asymmetric off-diagonal entries. If crowd $p$ pursues crowd $q$, $W_{pq}^{\text{inter}} < 0$ (attraction well towards $m_q$). If crowd $q$ evades crowd $p$, $W_{qp}^{\text{inter}} > 0$ (repulsion barrier away from $m_p$). Cross-congestion friction is high: $W_{pq}^{\text{cong}} \gg 1.0$.
+    \item \textbf{Allied / Cooperative Teams:} Populations share team affinity. $W_{pq}^{\text{inter}} \le 0$ encourages aggregation, and $W_{pq}^{\text{cong}} \approx 1.0$ models standard co-flow.
+    \item \textbf{Neutral / Bystander Crowds:} Unrelated populations moving through the domain. $W_{pq}^{\text{inter}} = 0$, while $W_{pq}^{\text{cong}} = 1.0$ enforces volume exclusion.
+\end{itemize}
+
+\subsection{Coupled Kolmogorov-Fokker-Planck (KFP) Equations}
+Each density $m_p(t, x)$ evolves forward in time according to its optimal velocity field $\mathbf{v}_p(t, x) = -\nabla_p H_p(x, m, \nabla u_p)$:
+\begin{equation}
+\label{eq:kfp_npop}
+\frac{\partial m_p}{\partial t} - \nu \Delta m_p - \text{div}\left( m_p \, \frac{2 \alpha \nabla u_p}{1 + m_p + \sum_{q \neq p} W_{pq}^{\text{cong}} m_q} \right) = 0,
+\end{equation}
+subject to initial distribution $m_p(0, x) = m_{0, p}(x)$, zero-flux Neumann conditions on $\Gamma_{\text{wall}}$, and Dirichlet absorption ($m_p = 0$) on $\Gamma_{\text{door}, p}(t)$.
+
+\section{Major Player (Evading Goal) Optimal Control Theory}
+
+We first formulate the continuous optimal control problem governing an evading goal, establishing the formal adjoint system, before introducing its regularized numerical realization.
+
+\subsection{Continuous Optimal Control Formulation}
+Consider an active evading goal whose position $y(t) \in \Omega$ evolves according to its velocity control $a(t) \in \mathbb{R}^2$:
+\begin{equation}
+\dot{y}(t) = a(t), \quad y(0) = y_0.
+\end{equation}
+The goal seeks to maximize its spatial separation from crowd density regions while penalizing kinetic control expenditure \cite{bergault2024mean, wan2021improved}:
+\begin{equation}
+\label{eq:goal_cost}
+J_E(a) = \int_0^T \left( \sum_{p=1}^N \kappa_p \int_{\Omega} \Phi(x - y(t)) m_p(t, x) \, dx + \frac{\gamma}{2} \|a(t)\|^2 \right) dt - G(y(T)),
+\end{equation}
+where $\Phi(r)$ is a repelling interaction kernel (e.g., Gaussian interaction $\Phi(r) = w_0 \exp(-\|r\|^2 / (2 r_0^2))$), $\kappa_p \ge 0$ is the sensitivity toward crowd $p$, $\gamma > 0$ denotes control effort cost, and $G(y(T))$ is a terminal survival reward.
+
+\subsection{Pontryagin's Maximum Principle \& Escape Force}
+Defining the goal costate vector $p_E(t) \in \mathbb{R}^2$, Pontryagin's Maximum Principle yields the optimal escape velocity \cite{badakaya2022game}:
+\begin{equation}
+a^*(t) = -\frac{p_E(t)}{\gamma}.
+\end{equation}
+
+The costate vector $p_E(t)$ satisfies the backward adjoint differential equation:
+\begin{equation}
+\label{eq:costate}
+\dot{p}_E(t) = \sum_{p=1}^N \kappa_p \int_{\Omega} \nabla_y \Phi(x - y(t)) m_p(t, x) \, dx, \quad p_E(T) = -\nabla_y G(y(T)).
+\end{equation}
+
+Differentiating the trajectory equation yields a second-order equation of motion driven by the macroscopic density gradient field:
+\begin{equation}
+\label{eq:goal_acceleration}
+\ddot{y}(t) = -\frac{1}{\gamma} \sum_{p=1}^N \kappa_p \int_{\Omega} \nabla_y \Phi(x - y(t)) m_p(t, x) \, dx.
+\end{equation}
+
+\subsection{The Coupled Major-Minor Nash Equilibrium}
+In the continuous formulation, a Mean Field Nash Equilibrium is defined as a tuple $( \{u_p^*\}_{p=1}^N, \{m_p^*\}_{p=1}^N, y^*, p_E^* )$ simultaneously satisfying:
+\begin{equation}
+\begin{cases}
+-\dfrac{\partial u_p}{\partial t} - \nu \Delta u_p + H_p(x, m, \nabla u_p) = f_p(x, y(t)) + C_{\text{inter}, p}(m), & u_p(T, x) = g_p(x, y(T)), \\[8pt]
+\dfrac{\partial m_p}{\partial t} - \nu \Delta m_p - \text{div}\left( m_p \nabla_p H_p(x, m, \nabla u_p) \right) = 0, & m_p(0, x) = m_{0, p}(x), \\[8pt]
+\dot{y}(t) = -\dfrac{p_E(t)}{\gamma}, & y(0) = y_0, \\[8pt]
+\dot{p}_E(t) = \sum_{p=1}^N \kappa_p \int_{\Omega} \nabla_y \Phi(x - y(t)) m_p(t, x) \, dx, & p_E(T) = -\nabla_y G(y(T)).
+\end{cases}
+\end{equation}
+
+\section{Numerical Realization \& Goal Capacity Saturation}
+
+In numerical implementations with bounded kinematic capabilities, solving the two-point boundary value problem for $p_E(t)$ across every Picard iteration is regularized into a forward-in-time potential field scheme with speed saturation.
+
+\subsection{Regularized Repulsive Force Field}
+For active evading goals, the force field $F(y_g(t))$ is evaluated directly from local crowd density via a regularized inverse-square kernel:
+\begin{equation}
+\label{eq:repulsion_force}
+F(y_g(t)) = \sum_{p=1}^N \kappa_p \int_{\Omega} \frac{y_g(t) - x}{\|y_g(t) - x\|^2 + \epsilon} m_p(t, x) \, dx,
+\end{equation}
+where $\epsilon > 0$ is a spatial regularization parameter preventing singularities. The velocity vector is constrained by a maximum physical speed $v_{\text{max}, g}$:
+\begin{equation}
+v_g(t) = \begin{cases} 
+v_{\text{max}, g} \dfrac{F(y_g(t))}{\|F(y_g(t))\|}, & \text{if } \|F(y_g(t))\| > \delta, \\[8pt]
+0, & \text{otherwise.}
+\end{cases}
+\end{equation}
+
+\subsection{Goal Capacity Saturation \& State Freezing}
+For goals configured with a finite capacity ceiling ($C_{\text{max}, g} < \infty$), cumulative mass absorption is integrated forward in time:
+\begin{equation}
+C_g(t) = \int_0^t \int_{\Omega_g(s)} \left( \sum_{p \in \mathcal{T}_g} m_p(s, x) \right) dx \, ds,
+\end{equation}
+where $\mathcal{T}_g \subseteq \{1, \dots, N\}$ denotes the crowd populations sharing goal $g$.
+The saturation step $t_{\text{sat}, g}$ is defined as:
+\begin{equation}
+t_{\text{sat}, g} = \min \left\{ t \in [0, T] : C_g(t) \ge C_{\text{max}, g} \right\}.
+\end{equation}
+For all $t \ge t_{\text{sat}, g}$:
+\begin{enumerate}
+    \item Goal $g$ is marked as saturated ($g \notin \mathcal{A}_p(t)$) and removed from HJB attraction.
+    \item The corresponding exit boundary region closes: $\Gamma_{\text{door}, g}(t) = \emptyset$.
+    \item The goal trajectory freezes permanently at its saturation coordinates: $y_g(t) = y_g(t_{\text{sat}, g})$.
+\end{enumerate}
+Position updates project onto the walkable domain $\Omega \setminus \Omega_{\text{obs}}$ to prevent obstacle penetration:
+\begin{equation}
+y_g(t + \Delta t) = \begin{cases} 
+\mathcal{P}_{\Omega \setminus \Omega_{\text{obs}}} \left( y_g(t) + v_g(t) \Delta t \right), & \text{if } t < t_{\text{sat}, g}, \\[6pt]
+y_g(t_{\text{sat}, g}), & \text{if } t \ge t_{\text{sat}, g}.
+\end{cases}
+\end{equation}
+
+\section{Algorithmic Resolution via Extended Picard Iteration}
+
+The coupled system is solved using fixed-point Picard iteration with under-relaxation $\theta \in (0, 1]$ and explicit trajectory clamping:
+\begin{enumerate}
+    \item \textbf{Initialization:} For each population $p$, initialize $U_p^{(0)}(t, x)$, $M_p^{(0)}(t, x)$, and initial goal trajectories $Y_p^{(0)}(t)$. Initialize terminal slice $U_p^{(0)}(T, x) = g_p(x)$.
+    \item \textbf{Step 1 (Goal Dynamics \& Saturation Update):} Given $\{M_p^{(k-1)}\}_{p=1}^N$, integrate goal trajectories $Y_{\text{temp}, p}$ and evaluate cumulative mass absorption $C_g(t)$. Determine saturation steps $t_{\text{sat}, g}$ and assemble exit masks $\Gamma_{\text{door}, p}(t)$.
+    \item \textbf{Step 2 (HJB Backward Solve for all $p$):} For each $p \in \{1, \dots, N\}$, solve Eq.~\eqref{eq:hjb_npop} backward from $t = T$ to $t = 0$ using terminal condition $u_p(T, x) = g_p(x)$ and running cost $f_p(x, t)$. Update:
+    \begin{equation}
+    U_p^{(k)} = \theta \tilde{U}_p^{(k)} + (1 - \theta) U_p^{(k-1)}.
+    \end{equation}
+    \item \textbf{Step 3 (KFP Forward Solve for all $p$):} For each $p \in \{1, \dots, N\}$, solve Eq.~\eqref{eq:kfp_npop} forward from $t = 0$ to $t = T$ using $U_p^{(k)}$ and $\Gamma_{\text{door}, p}(t)$. Update:
+    \begin{equation}
+    M_p^{(k)} = \theta \tilde{M}_p^{(k)} + (1 - \theta) M_p^{(k-1)}.
+    \end{equation}
+    \item \textbf{Step 4 (Trajectory Relaxation \& Post-Saturation Clamping):} Relax goal trajectories: $Y_p^{(k)} = \theta Y_{\text{temp}, p} + (1-\theta) Y_p^{(k-1)}$. For all goals reaching capacity ($t_{\text{sat}, g} \le T$), enforce hard coordinate clamping across all iterations:
+    \begin{equation}
+    y_g^{(k)}(t) = Y_{\text{temp}}(t_{\text{sat}, g}), \quad \forall t \ge t_{\text{sat}, g}.
+    \end{equation}
+    \item \textbf{Convergence Check:} Repeat until space-time residuals satisfy $\max_p \|U_p^{(k)} - U_p^{(k-1)}\|_2 < \epsilon$ and $\max_p \|M_p^{(k)} - M_p^{(k-1)}\|_2 < \epsilon$.
+\end{enumerate}
+
+\begin{thebibliography}{99}
+
+\bibitem{caines2017mean}
+P.~E. Caines, M.~Huang, and R.~P. Malham{\'e}, 
+\emph{Mean field games}, Handbook of Dynamic Game Theory, Springer, pp.~345--372, 2017.
+
+\bibitem{carmona2016probabilistic}
+R.~Carmona and X.~Zhu, 
+\emph{A probabilistic approach to mean field games with major and minor players}, 
+The Annals of Applied Probability, vol.~26, no.~3, pp.~1535--1580, 2016.
+
+\bibitem{huang2016backward}
+J.~Huang, S.~Wang, and Z.~Wu, 
+\emph{Backward-forward linear-quadratic mean-field games with major and minor agents}, 
+Probability, Uncertainty and Quantitative Risk, vol.~1, no.~1, p.~8, 2016.
+
+\bibitem{bergault2024mean}
+P.~Bergault, P.~Cardaliaguet, and C.~Rainer, 
+\emph{Mean field games in a Stackelberg problem with an informed major player}, 
+SIAM Journal on Control and Optimization, vol.~62, no.~3, pp.~1737--1765, 2024.
+
+\bibitem{badakaya2022game}
+A.~J. Badakaya, A.~S. Halliru, and J.~Adamu, 
+\emph{Game value for a pursuit-evasion differential game problem in a Hilbert space}, 
+Journal of Dynamics \& Games, vol.~9, no.~1, pp.~1--15, 2022.
+
+\bibitem{wan2021improved}
+K.~Wan, D.~Wu, Y.~Zhai, B.~Li, X.~Gao, and Z.~Hu, 
+\emph{An improved approach towards multi-agent pursuit--evasion game decision-making using deep reinforcement learning}, 
+Entropy, vol.~23, no.~11, p.~1433, 2021.
+
+\end{thebibliography}
+
+\end{document}

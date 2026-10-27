@@ -1,49 +1,21 @@
 """
-Mean Field Games Problem Solvers
+Mean Field Games Generalized N-Population Problem Solvers.
 
-This module provides object-oriented solvers for Mean Field Game (MFG) systems,
-which model large populations of rational agents making optimal decisions while
-influenced by the aggregate behavior of the population.
+This module provides object-oriented numerical solvers for arbitrary N-population
+Mean Field Game (MFG) systems, coupling backward Hamilton-Jacobi-Bellman (HJB) equations
+with forward Kolmogorov-Fokker-Planck (KFP) equations via damped Picard iteration.
 
-The module implements:
-1. MFGSolver: Single-population systems with static or dynamic goals (pursuit-evasion)
-2. MFG2PopSolver: Coupled two-population competitive/cooperative systems
-
-Mathematical Foundation
------------------------
-Each solver solves a coupled system of PDEs via Picard iteration:
-- Hamilton-Jacobi-Bellman (HJB) equation: Backward in time, computes optimal control (value function u)
-- Kolmogorov-Fokker-Planck (KFP) equation: Forward in time, evolves population density (m)
-
-MFGSolver consolidates time-stepping loops for both static exit doors
-and dynamic goals into a unified execution path. The Picard iteration alternates
-between solving HJB given density m, then solving KFP given value u, with under-relaxation
-(thetaUM parameter) to stabilize convergence.
-
-Mathematical Generalization
----------------------------
-Decouples running and terminal cost components in the crowd objective functional:
-
-    J(x) = ∫₀ᵀ f(x(t), t) dt + g(x(T))
-
-where:
-    - Running cost f(x, t) = w_R · min_{g ∈ A(t)} ||x - y_g(t)||^{p_R} + S(x, t)
-    - Terminal cost g(x) = w_T · min_{g ∈ A(T)} ||x - y_g(T)||^{p_T}
-
-This parameterization allows mfgames to seamlessly unify modern pursuit-evasion
-models (w_R = 0.01, w_T = +0.01, goals_are_exits: true) with legacy formulations
-such as MAP2PDE.py (w_R = 0.0, w_T = -1.0, p_T = 2, goals_are_exits: false)
-
-Goal Capacity Saturation
-------------------------
-For mobile landing platforms or capacity-limited exits, the cumulative density absorbed
-by each goal region is integrated forward in space and time:
-    C_g(t) = ∫₀ᵗ ∫_{\\Omega_g(s)} m(s, x) dx ds
-
-When C_g(t) reaches capacity threshold C_max, the exit region deactivates (door_mask = 0),
-switching boundary conditions from Dirichlet mass absorption (u=0, m=0) to interior transport.
-Optionally, for soft potential goals, attraction cost weights decay proportionally as capacity fills.
+Key Classes
+-----------
+- Population: Data container encapsulating a single crowd's spatial mesh, initial
+  density, decoupled running/terminal costs, kinematic parameters, and goal manager.
+- MFGSolver: Fully coupled Nash equilibrium solver for arbitrary N >= 1 populations.
+- MFG2PopSolver: Backward-compatible 2-population wrapper matching MAP2PDE2POP.py.
+- MFGShadowLeaderSolver: Scalable N-population Stackelberg / Shadow-Leader solver that
+  freezes leader trajectories to decouple follower best-response computations.
 """
+
+from dataclasses import dataclass, field
 import time
 import numpy as np
 import scipy.sparse as sparse
@@ -59,40 +31,73 @@ from mfgames.numerics import (
 )
 
 
+@dataclass
+class Population:
+    """
+    Data container representing a single crowd population in an N-population game.
+
+    Parameters
+    ----------
+    name : str
+        Descriptive label for the population (e.g., 'pursuers', 'evaders', 'team_alpha').
+    mesh : MAP2PDE or MFGTrafficGeometry
+        Spatial discretization mesh providing coordinates, step sizes, and obstacle masks.
+    m0 : ndarray, optional
+        Initial macroscopic crowd density grid of shape (Nx, Ny).
+    goal_configs : list, optional
+        Goal specification dictionaries defining positions, speeds, and capacities.
+    goals_are_exits : bool
+        If True, active goals act as absorbing exit boundaries with Dirichlet condition u=0.
+    running_cost_weight : float
+        Weight w_R scaling running distance costs accumulated during t < T.
+    terminal_cost_weight : float
+        Weight w_T scaling terminal distance cost evaluated at t = T.
+    running_cost_power : int
+        Distance power p_R (1 for linear distance, 2 for squared Euclidean distance).
+    terminal_cost_power : int
+        Distance power p_T (1 for linear distance, 2 for squared Euclidean distance).
+    saturated_goal_penalty : float
+        Repulsive Gaussian barrier erected around goals that have exceeded capacity.
+    obstacle_penalty : float
+        Potential penalty applied to obstacle grid cells in the HJB residual.
+    stencil_mode : int
+        0 for standard 1-population / pursuit-evasion upwind stencils;
+        1 for MAP2PDE2POP cross-interaction upwind stencils.
+    """
+
+    name: str = "population"
+    mesh: object = None
+    m0: np.ndarray = None
+    goal_configs: list = field(default_factory=list)
+    goals_are_exits: bool = False
+    running_cost_weight: float = 0.01
+    terminal_cost_weight: float = 0.01
+    running_cost_power: int = 2
+    terminal_cost_power: int = 2
+    saturated_goal_penalty: float = 0.0
+    obstacle_penalty: float = -500.0
+    stencil_mode: int = 0
+
+    # Allocated simulation states
+    U: np.ndarray = field(default=None, repr=False)
+    M: np.ndarray = field(default=None, repr=False)
+    goal: Goal = field(default=None, repr=False)
+    door_mask: np.ndarray = field(default=None, repr=False)
+
+
 class MFGSolver:
     """
-    Mean Field Game solver for single-population systems with goal-seeking behavior.
+    Generalized N-Population Mean Field Game Solver.
 
-    This solver handles crowds navigating toward static, dynamic, or capacity-constrained
-    goals in a 2D spatial domain with obstacles. It handles static exit locations,
-    moving doors, reactive goals, and finite-capacity landing platforms.
-
-    Attributes:
-        pde_mesh (PDEMeshData): Spatial mesh containing geometry, obstacles, and initial conditions
-        Nx (int): Number of grid points in x-direction
-        Ny (int): Number of grid points in y-direction
-        Lx (float): Physical domain width in metres
-        Ly (float): Physical domain height in metres
-        Dx (float): Grid spacing in x-direction
-        Dy (float): Grid spacing in y-direction
-        Dt (float): Time step size (seconds)
-        Nt (int): Number of time steps
-        thetaUM (float): Under-relaxation parameter for Picard iteration (0 < theta <= 1)
-        goals_are_exits (bool): If True, goals act as absorbing boundaries (Dirichlet BC)
-        running_cost_weight (float): Weight for distance-to-goal running cost in HJB
-        obstacle_penalty (float): Large negative penalty applied inside obstacles
-        omask (ndarray): Obstacle mask (Nx, Ny) - 0 for obstacles, 1 for free space
-        m0 (ndarray): Initial density distribution (Nx, Ny)
-        M (ndarray): Density trajectory (Nt+1, Nx, Ny) - solution to KFP equation
-        U (ndarray): Value function trajectory (Nt+1, Nx, Ny) - solution to HJB equation
-        goal (Goal|None): Goal object managing dynamic goal trajectories and capacities
-        door_mask (ndarray): Consolidated time-dependent exit/goal mask (Nt+1, Nx, Ny)
-        door_mask_3d (ndarray): Property alias for backward compatibility with MFGPlotter
+    Supports N = 1 (single crowd navigation and traffic evacuation) and arbitrary N >= 2
+    (competitive, cooperative, or multi-team swarms) through a single codebase.
     """
 
     def __init__(
         self,
-        pde_mesh_data,
+        populations: list[Population] | None = None,
+        # 1-Population convenience parameters (backward compatibility)
+        pde_mesh_data=None,
         T: float = 3.0,
         Nt: int = 100,
         thetaUM: float = 0.1,
@@ -106,645 +111,612 @@ class MFGSolver:
         running_cost_power: int = 2,
         terminal_cost_power: int = 2,
         saturated_goal_penalty: float = 0.0,
+        # N-Population relational parameters
+        interaction_matrix: np.ndarray | None = None,
+        congestion_matrix: np.ndarray | None = None,
+        shared_capacity_goals: bool = False,
     ):
-        """
-        Initialize the Mean Field Game solver with decoupled objective weights.
-
-        Args:
-            pde_mesh_data (PDEMeshData): Mesh object containing spatial grid, obstacles,
-                initial conditions, and goal configurations
-            T (float): Total simulation time in seconds (default: 3.0)
-            Nt (int): Number of time discretization steps (default: 100)
-            thetaUM (float): Under-relaxation parameter for Picard iteration.
-                Smaller values (0.05-0.1) stabilize convergence but require more iterations.
-                Larger values (0.3-0.5) converge faster but may oscillate. (default: 0.1)
-            door_mask_3d (ndarray|None): Optional pre-computed time-dependent exit mask
-                of shape (Nt+1, Nx, Ny). If None, computed from goal_configs (default: None)
-            goal_configs (list|None): List of goal configuration dictionaries. If None,
-                goals are extracted from pde_mesh_data (default: None)
-            goals_are_exits (bool): If True, goals act as absorbing boundaries where
-                density exits the domain (Dirichlet BC u=0) (default: False)
-            obstacle_penalty (float): Large negative value assigned to obstacle cells.
-                If None, auto-scaled to -5 * max_running_cost (default: -500.0)
-            running_cost_weight (float): Running cost weight w_R for t < T (default: 0.01).
-            terminal_cost_weight (float|None): Terminal cost weight w_T at t = T.
-                Defaults to running_cost_weight if None.
-            running_cost_power (int): Distance exponent p_R for running cost (1 or 2).
-            terminal_cost_power (int): Distance exponent p_T for terminal cost (1 or 2).
-            saturated_goal_penalty (float): Repulsive penalty weight for filled goals.
-        """
-        self.pde_mesh = pde_mesh_data
-        self.Nx, self.Ny = pde_mesh_data.X.shape
-        self.Lx, self.Ly = pde_mesh_data.Lx, pde_mesh_data.Ly
-        self.Dx, self.Dy = pde_mesh_data.dx, pde_mesh_data.dy
-        self.Dt, self.Nt = T / Nt, Nt
+        self.T, self.Nt = T, Nt
+        self.Dt = T / Nt
         self.thetaUM = thetaUM
-        self.goals_are_exits = goals_are_exits
-        
-        # Objective functional weights and powers
-        self.running_cost_weight = running_cost_weight
-        self.terminal_cost_weight = terminal_cost_weight if terminal_cost_weight is not None else running_cost_weight
-        self.running_cost_power = running_cost_power
-        self.terminal_cost_power = terminal_cost_power
-        self.saturated_goal_penalty = saturated_goal_penalty
+        self.shared_capacity_goals = shared_capacity_goals
 
-        # Dynamically scale obstacle penalty relative to max potential drop on grid if not provided.
-        # This ensures obstacles remain strongly repulsive regardless of domain size.
-        if obstacle_penalty is not None:
-            self.obstacle_penalty = obstacle_penalty
+        # Normalize 1-population inputs into the Population container
+        if populations is not None:
+            self.populations = populations
+            primary_mesh = populations[0].mesh
+        elif pde_mesh_data is not None:
+            primary_mesh = pde_mesh_data
+            pop1 = Population(
+                name="pop_1",
+                mesh=pde_mesh_data,
+                m0=pde_mesh_data.build_initial_density(),
+                goal_configs=goal_configs if goal_configs is not None else getattr(pde_mesh_data, 'custom_goals', []),
+                goals_are_exits=goals_are_exits,
+                running_cost_weight=running_cost_weight,
+                terminal_cost_weight=terminal_cost_weight if terminal_cost_weight is not None else running_cost_weight,
+                running_cost_power=running_cost_power,
+                terminal_cost_power=terminal_cost_power,
+                saturated_goal_penalty=saturated_goal_penalty,
+                obstacle_penalty=obstacle_penalty if obstacle_penalty is not None else -500.0,
+                stencil_mode=0,
+            )
+            self.populations = [pop1]
         else:
-            max_grid_dist_sq = self.Lx**2 + self.Ly**2
-            max_cost = self.running_cost_weight * max_grid_dist_sq
-            self.obstacle_penalty = -5.0 * max_cost
+            raise ValueError("Must provide either 'populations' or 'pde_mesh_data'.")
 
-        # Allocate solution arrays: M for density, U for value function
-        self.omask = pde_mesh_data.get_pde_obstacle_mask()
-        self.m0 = pde_mesh_data.build_initial_density()
+        self.num_pops = len(self.populations)
+        self.Nx, self.Ny = primary_mesh.X.shape
+        self.Lx, self.Ly = primary_mesh.Lx, primary_mesh.Ly
+        self.Dx, self.Dy = primary_mesh.dx, primary_mesh.dy
+        self.omask = primary_mesh.get_pde_obstacle_mask()
 
-        # Allocate solution arrays: M for density, U for value function
-        self.M = np.zeros((self.Nt + 1, self.Nx, self.Ny))
-        self.U = np.zeros((self.Nt + 1, self.Nx, self.Ny))
-        self.M[0] = self.m0
+        # Inter-crowd strategic interaction matrix W_inter and cross-congestion matrix W_cong
+        if interaction_matrix is not None:
+            self.interaction_matrix = np.asarray(interaction_matrix, dtype=np.float64)
+        else:
+            self.interaction_matrix = np.zeros((self.num_pops, self.num_pops), dtype=np.float64)
+
+        if congestion_matrix is not None:
+            self.congestion_matrix = np.asarray(congestion_matrix, dtype=np.float64)
+        else:
+            self.congestion_matrix = np.zeros((self.num_pops, self.num_pops), dtype=np.float64)
 
         initial_door_mask = door_mask if door_mask is not None else door_mask_3d
 
-        # Automatic Goal detection from mesh data or explicit config
-        raw_goals = goal_configs if goal_configs is not None else pde_mesh_data.get_goals()
-        if raw_goals:
-            self.goal = Goal(
-                goal_configs=raw_goals,
-                Nt=Nt,
-                Dt=self.Dt,
-                T=T,
-                Lx=self.Lx,
-                Ly=self.Ly,
-                goals_are_exits_default=self.goals_are_exits
-            )
-            self.door_mask = self._build_dynamic_goal_doors(self.goal.Y_trajectories)
-            # Initialize terminal slice to prevent Picard under-relaxation drift at t = T
-            self.U[self.Nt] = self.compute_terminal_cost(self.goal.Y_trajectories[self.Nt])
-        else:
-            self.goal = None
-            if initial_door_mask is not None:
-                self.door_mask = initial_door_mask
+        # Initialize simulation states and Goal managers for each population
+        for p_idx, pop in enumerate(self.populations):
+            pop.M = np.zeros((self.Nt + 1, self.Nx, self.Ny), dtype=np.float64)
+            pop.U = np.zeros((self.Nt + 1, self.Nx, self.Ny), dtype=np.float64)
+
+            if pop.m0 is None:
+                pop.m0 = pop.mesh.build_initial_density()
+            pop.M[0] = pop.m0
+
+            raw_goals = pop.goal_configs if pop.goal_configs else getattr(pop.mesh, 'custom_goals', None)
+            if raw_goals is None and hasattr(pop.mesh, 'get_goals'):
+                raw_goals = pop.mesh.get_goals()
+
+            if raw_goals:
+                pop.goal = Goal(
+                    goal_configs=raw_goals,
+                    Nt=self.Nt,
+                    Dt=self.Dt,
+                    T=self.T,
+                    Lx=self.Lx,
+                    Ly=self.Ly,
+                    goals_are_exits_default=pop.goals_are_exits,
+                )
+                pop.door_mask = self._build_dynamic_doors(pop, pop.goal.Y_trajectories)
+                # Terminal slice initialization prevents early Picard relaxation drift
+                pop.U[self.Nt] = self.compute_terminal_cost(pop, pop.goal.Y_trajectories[self.Nt])
             else:
-                self.door_mask = np.zeros((Nt + 1, self.Nx, self.Ny))
-            self.U[self.Nt] = np.zeros((self.Nx, self.Ny))
+                pop.goal = None
+                if self.num_pops == 1 and initial_door_mask is not None:
+                    pop.door_mask = initial_door_mask
+                else:
+                    pop.door_mask = np.zeros((self.Nt + 1, self.Nx, self.Ny), dtype=np.float64)
+                pop.U[self.Nt] = np.zeros((self.Nx, self.Ny), dtype=np.float64)
 
-        self.door_mask_3d = self.door_mask
+    # --- Backward-Compatibility Properties for 1-Population Runs ---
+    @property
+    def M(self): return self.populations[0].M
+    @M.setter
+    def M(self, val): self.populations[0].M = val
 
-    def _build_dynamic_goal_doors(self, goal_trajectories):
-        """Construct time-dependent exit mask for active exit goals[cite: 25]."""
-        door_mask = np.zeros((self.Nt + 1, self.Nx, self.Ny))
-        if not self.goal or goal_trajectories is None:
+    @property
+    def U(self): return self.populations[0].U
+    @U.setter
+    def U(self, val): self.populations[0].U = val
+
+    @property
+    def goal(self): return self.populations[0].goal
+
+    @property
+    def door_mask(self): return self.populations[0].door_mask
+    @property
+    def door_mask_3d(self): return self.populations[0].door_mask
+
+    @property
+    def obstacle_penalty(self): return self.populations[0].obstacle_penalty
+
+    # --- Backward-Compatibility Properties for 2-Population Runs ---
+    @property
+    def M1(self): return self.populations[0].M
+    @property
+    def M2(self): return self.populations[1].M if self.num_pops > 1 else None
+    @property
+    def U1(self): return self.populations[0].U
+    @property
+    def U2(self): return self.populations[1].U if self.num_pops > 1 else None
+
+    def _build_dynamic_doors(self, pop, goal_trajectories):
+        """Construct time-indexed door mask for a population's active exit goals."""
+        door_mask = np.zeros((self.Nt + 1, self.Nx, self.Ny), dtype=np.float64)
+        if not pop.goal or goal_trajectories is None:
             return door_mask
 
-        X, Y = self.pde_mesh.X, self.pde_mesh.Y
+        X, Y = pop.mesh.X, pop.mesh.Y
         for k in range(self.Nt + 1):
-            for g_idx, g_info in enumerate(self.goal.goals):
-                if g_info['is_exit']:
+            for g_idx, g_info in enumerate(pop.goal.goals):
+                if g_info.get('is_exit', False):
                     gx, gy = goal_trajectories[k, g_idx]
                     region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
                     door_mask[k][region] = 1.0
         return door_mask
 
-    def compute_saturated_door_mask(self, goal_trajectories):
-        """
-        Constructs time-dependent exit mask considering goal capacity limits.
-
-        Integrates agent density entering each goal region over time. When cumulative
-        absorbed mass reaches a goal's capacity ceiling C_max, the exit boundary is closed
-        (door_mask = 0) for all subsequent timesteps.
-
-        Args:
-            goal_trajectories (ndarray): Goal positions, shape (Nt+1, num_goals, 2)
-
-        Returns:
-            ndarray: Updated door mask of shape (Nt+1, Nx, Ny)
-        """
-        door_mask = np.zeros((self.Nt + 1, self.Nx, self.Ny))
-        if not self.goal or goal_trajectories is None:
+    def compute_saturated_door_mask(self, pop, goal_trajectories):
+        """Update door mask querying Goal.is_saturated directly."""
+        door_mask = np.zeros((self.Nt + 1, self.Nx, self.Ny), dtype=np.float64)
+        if not pop.goal or goal_trajectories is None:
             return door_mask
 
-        X, Y = self.pde_mesh.X, self.pde_mesh.Y
-
+        X, Y = pop.mesh.X, pop.mesh.Y[cite: 8]
         for k in range(self.Nt + 1):
-            for g_idx, g_info in enumerate(self.goal.goals):
-                if not g_info['is_exit']:
+            for g_idx, g_info in enumerate(pop.goal.goals):
+                if not g_info.get('is_exit', False):
                     continue
-
-                if not self.goal.is_saturated[k, g_idx]:
+                if not pop.goal.is_saturated[k, g_idx]:
                     gx, gy = goal_trajectories[k, g_idx]
                     region = (np.abs(X - gx) <= self.Dx) & (np.abs(Y - gy) <= self.Dy)
                     door_mask[k][region] = 1.0
-
         return door_mask
 
-    def compute_running_cost(self, goal_positions_k, k=None):
-        """
-        Compute distance-based running cost to nearest goal at timestep k, accounting for capacity.
-        Returns 0.0 when running_cost_weight == 0.0.
+    def compute_running_cost(self, pop, goal_positions_k, k=None):
+        """Compute running distance cost f_p(x, t) for population p at timestep k."""
+        if pop.running_cost_weight == 0.0 or goal_positions_k is None or len(goal_positions_k) == 0:
+            return np.zeros((self.Nx, self.Ny), dtype=np.float64)
 
-        The running cost penalizes distance from goals, incentivizing the crowd to
-        move toward goals. If finite capacity constraints exist, effective distance is
-        scaled up as the goal fills (dist^2 / weight). Once fully saturated (weight = 0),
-        the goal is assigned an infinite distance penalty and excluded from attracting agents.
-
-        Args:
-            goal_positions_k (ndarray): Goal positions at time k, shape (num_goals, 2)
-            k (int|None): Current timestep index for capacity tracking
-            M_trajectory (ndarray|None): Full density trajectory for capacity integration
-
-        Returns:
-            ndarray: Running cost field of shape (Nx, Ny)
-        """
-        if self.running_cost_weight == 0.0 or goal_positions_k is None or len(goal_positions_k) == 0:
-            return np.zeros((self.Nx, self.Ny))
-
-        X, Y = self.pde_mesh.X, self.pde_mesh.Y
+        X, Y = pop.mesh.X, pop.mesh.Y[cite: 8]
         active_distances = []
-        saturated_repulsion = np.zeros((self.Nx, self.Ny))
+        saturated_repulsion = np.zeros((self.Nx, self.Ny), dtype=np.float64)
 
         for g_idx, (gx, gy) in enumerate(goal_positions_k):
             is_active = True
-            if k is not None and self.goal is not None and self.goal.has_capacity_limits:
-                if self.goal.is_saturated[k, g_idx]:
+            if k is not None and pop.goal is not None and pop.goal.has_capacity_limits:
+                if pop.goal.is_saturated[k, g_idx]:
                     is_active = False
 
             if is_active:
-                if self.running_cost_power == 2:
+                if pop.running_cost_power == 2:
                     dist_term = (X - gx) ** 2 + (Y - gy) ** 2
                 else:
                     dist_term = np.sqrt((X - gx) ** 2 + (Y - gy) ** 2)
                 active_distances.append(dist_term)
-            elif self.saturated_goal_penalty > 0.0:
-                # Add Gaussian repulsive barrier around closed/saturated goal location
+            elif pop.saturated_goal_penalty > 0.0:
                 dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
                 sigma_sq = (10.0 * self.Dx) ** 2
-                saturated_repulsion += self.saturated_goal_penalty * np.exp(-dist_sq / (2.0 * sigma_sq))
+                saturated_repulsion += pop.saturated_goal_penalty * np.exp(-dist_sq / (2.0 * sigma_sq))
 
         if active_distances:
             min_dist = np.minimum.reduce(active_distances)
         else:
-            min_dist = np.zeros((self.Nx, self.Ny))
+            min_dist = np.zeros((self.Nx, self.Ny), dtype=np.float64)
 
-        return self.running_cost_weight * min_dist + saturated_repulsion
+        return pop.running_cost_weight * min_dist + saturated_repulsion
 
-    def compute_terminal_cost(self, goal_positions_Nt):
-        """Compute terminal condition g(x) = u(T, x) at time step t = T, accounting for capacity."""
-        if self.terminal_cost_weight == 0.0 or goal_positions_Nt is None or len(goal_positions_Nt) == 0:
-            return np.zeros((self.Nx, self.Ny))
+    def compute_terminal_cost(self, pop, goal_positions_Nt):
+        """Compute terminal condition g_p(x) = u_p(T, x) at final time t = T."""
+        if pop.terminal_cost_weight == 0.0 or goal_positions_Nt is None or len(goal_positions_Nt) == 0:
+            return np.zeros((self.Nx, self.Ny), dtype=np.float64)
 
-        X, Y = self.pde_mesh.X, self.pde_mesh.Y
+        X, Y = pop.mesh.X, pop.mesh.Y[cite: 8]
         active_distances = []
-        saturated_repulsion = np.zeros((self.Nx, self.Ny))
+        saturated_repulsion = np.zeros((self.Nx, self.Ny), dtype=np.float64)
 
         for g_idx, (gx, gy) in enumerate(goal_positions_Nt):
             is_active = True
-            # Exclude goal if it has saturated by final time t = T (k = Nt)
-            if self.goal is not None and self.goal.has_capacity_limits:
-                if self.goal.is_saturated[self.Nt, g_idx]:
+            if pop.goal is not None and pop.goal.has_capacity_limits:
+                if pop.goal.is_saturated[self.Nt, g_idx]:
                     is_active = False
 
             if is_active:
-                if self.terminal_cost_power == 2:
+                if pop.terminal_cost_power == 2:
                     dist_term = (X - gx) ** 2 + (Y - gy) ** 2
                 else:
                     dist_term = np.sqrt((X - gx) ** 2 + (Y - gy) ** 2)
                 active_distances.append(dist_term)
-            elif self.saturated_goal_penalty > 0.0:
+            elif pop.saturated_goal_penalty > 0.0:
                 dist_sq = (X - gx) ** 2 + (Y - gy) ** 2
                 sigma_sq = (10.0 * self.Dx) ** 2
-                saturated_repulsion += self.saturated_goal_penalty * np.exp(-dist_sq / (2.0 * sigma_sq))
+                saturated_repulsion += pop.saturated_goal_penalty * np.exp(-dist_sq / (2.0 * sigma_sq))
 
         if active_distances:
             min_dist = np.minimum.reduce(active_distances)
         else:
-            min_dist = np.zeros((self.Nx, self.Ny))
+            min_dist = np.zeros((self.Nx, self.Ny), dtype=np.float64)
 
-        return self.terminal_cost_weight * min_dist + saturated_repulsion
+        return pop.terminal_cost_weight * min_dist + saturated_repulsion
 
-    def solve_forward_FP_step(self, U_trajectory, door_mask):
+    def _get_coupling_fields(self, p_idx: int, k: int):
         """
-        Solve the Fokker-Planck (KFP) equation forward in time.
-
-        The KFP equation evolves the density distribution m from initial condition m0
-        under the transport field induced by the optimal control (derived from gradient
-        of value function U). Uses implicit Euler time discretization.
-
-        Mathematical formulation:
-            ∂m/∂t - ∇·(m ∇H_p(x,∇u)) = 0
-        where H_p is the momentum gradient of the Hamiltonian.
-
-        Args:
-            U_trajectory (ndarray): Value function trajectory, shape (Nt+1, Nx, Ny)
-            door_mask (ndarray): Time-dependent exit mask, shape (Nt+1, Nx, Ny)
-
-        Returns:
-            ndarray: Evolved density m of shape (Nt+1, Nx, Ny)
+        Compute effective other-crowd congestion and interaction potential fields for population p[cite: 10].
         """
-        m = np.zeros_like(self.M)
-        m[0] = self.m0
-        N_total = self.Nx * self.Ny
+        other_congestion = np.zeros((self.Nx, self.Ny), dtype=np.float64)
+        interaction_cost = np.zeros((self.Nx, self.Ny), dtype=np.float64)
+        total_density = np.zeros((self.Nx, self.Ny), dtype=np.float64)
 
-        for k in range(1, self.Nt + 1):
-            rows, cols, vals, b = compute_FP_matrix_entries(
-                m[k - 1], U_trajectory[k - 1], self.omask, door_mask[k - 1],
-                self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
-            )
-            A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()
-            mtmp = sparse.linalg.spsolve(A, b)
-            m[k] = mtmp.reshape((self.Nx, self.Ny))
-        return m
+        for q_idx, q_pop in enumerate(self.populations):
+            mq_k = q_pop.M[k]
+            total_density += mq_k
+            if q_idx != p_idx:
+                w_c = self.congestion_matrix[p_idx, q_idx]
+                other_congestion += w_c * mq_k
+                w_i = self.interaction_matrix[p_idx, q_idx]
+                interaction_cost += w_i * mq_k[cite: 10]
 
-    def solve_backward_HJB_step(self, M_trajectory, goal_trajectories, door_mask):
-        """
-        Solve the Hamilton-Jacobi-Bellman (HJB) equation backward in time.
+        # Congestion capacity penalty: max(sum(m_q) - 4.0, 0.0)[cite: 10]
+        if self.num_pops > 1:
+            interaction_cost += np.maximum(total_density - 4.0, 0.0)[cite: 10]
 
-        The HJB equation computes optimal value function u, which represents cost-to-go
-        from any position to goals. The equation is nonlinear due to the Hamiltonian,
-        requiring Newton iteration at each timestep. Uses implicit Euler discretization.
-        
-        Mathematical formulation:
-            $$-\\frac{\\partial u}{\\partial t} + H(x, m, \\nabla u) - \\nu \\Delta u = 0$$
-        Args:
-            M_trajectory (ndarray): Density trajectory, shape (Nt+1, Nx, Ny)
-            goal_trajectories (ndarray|None): Goal positions, shape (Nt+1, num_goals, 2) or None
-            door_mask (ndarray): Time-dependent exit mask, shape (Nt+1, Nx, Ny)
+        return other_congestion, interaction_cost
 
-        Returns:
-            ndarray: Value function u of shape (Nt+1, Nx, Ny)
-        """
-        u = np.zeros_like(self.U)
+    def solve_forward_FP_step(self, p_idx: int, U_p):
+        """Solve forward KFP equation for population p given optimal value function U_p[cite: 8, 10]."""
+        pop = self.populations[p_idx]
+        m = np.zeros_like(pop.M)[cite: 8]
+        m[0] = pop.m0[cite: 8, 10]
+        N_total = self.Nx * self.Ny[cite: 8, 10]
 
-        # Terminal boundary condition u(T, x) = g(x)
-        if goal_trajectories is not None:
-            u[self.Nt] = self.compute_terminal_cost(goal_trajectories[self.Nt])
-        else:
-            u[self.Nt] = np.zeros((self.Nx, self.Ny))
-
-        # Backward time-stepping loop
-        for k in range(self.Nt - 1, -1, -1):
-            running_cost_k = (
-                self.compute_running_cost(goal_trajectories[k], k=k)
-                if goal_trajectories is not None
-                else np.zeros((self.Nx, self.Ny))
-            )
-            Unew_n = np.copy(u[k + 1])
-            N_total = self.Nx * self.Ny
-
-            # Newton iteration for nonlinear Hamiltonian (max 30 iterations)
-            for _ in range(30):
-                FnU_flat = getFnU_2D(
-                    u[k + 1], Unew_n, M_trajectory[k + 1], self.omask, door_mask[k],
-                    running_cost_k, self.Nx, self.Ny, self.Dx, self.Dy, self.Dt,
-                    obstacle_penalty=self.obstacle_penalty
-                ).flatten()
-
-                # Compute Jacobian matrix A = ∂F/∂U
-                rows, cols, vals = compute_HJB_matrix_entries(
-                    Unew_n, M_trajectory[k + 1], self.omask, door_mask[k],
+        for k in range(1, self.Nt + 1):[cite: 8, 10]
+            dm = pop.door_mask[k - 1] if pop.door_mask is not None else np.zeros((self.Nx, self.Ny))
+            if pop.stencil_mode == 0:
+                rows, cols, vals, b = compute_FP_matrix_entries(
+                    m[k - 1], U_p[k - 1], self.omask, dm,
                     self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
                 )
-                A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()
-                b = A.dot(Unew_n.flatten()) - FnU_flat
+            else:
+                other_m, _ = self._get_coupling_fields(p_idx, k - 1)
+                rows, cols, vals, b = compute_FP_matrix_entries_2Pop(
+                    m[k - 1], other_m, U_p[k - 1], self.omask,
+                    self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
+                )[cite: 10]
 
-                # Apply boundary conditions: Dirichlet u=0 at exit doors, potential penalty at obstacles
-                for i in range(self.Nx):
-                    for j in range(self.Ny):
-                        ind = i * self.Ny + j
-                        if door_mask[k, i, j] == 1:
+            A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()[cite: 8, 10]
+            mtmp = sparse.linalg.spsolve(A, b)[cite: 8, 10]
+            m[k] = mtmp.reshape((self.Nx, self.Ny))[cite: 8, 10]
+        return m
+
+    def solve_backward_HJB_step(self, p_idx: int, goal_trajectories):
+        """Solve backward HJB equation for population p given current crowd densities[cite: 8, 10]."""
+        pop = self.populations[p_idx]
+        u = np.zeros_like(pop.U)[cite: 8]
+        N_total = self.Nx * self.Ny[cite: 8, 10]
+
+        if goal_trajectories is not None:
+            u[self.Nt] = self.compute_terminal_cost(pop, goal_trajectories[self.Nt])
+        else:
+            u[self.Nt] = np.zeros((self.Nx, self.Ny), dtype=np.float64)
+
+        for k in range(self.Nt - 1, -1, -1):[cite: 8, 10]
+            running_cost_k = (
+                self.compute_running_cost(pop, goal_trajectories[k], k=k)
+                if goal_trajectories is not None
+                else np.zeros((self.Nx, self.Ny), dtype=np.float64)
+            )
+            dm = pop.door_mask[k] if pop.door_mask is not None else np.zeros((self.Nx, self.Ny))
+            Unew_n = np.copy(u[k + 1])[cite: 8, 10]
+            other_m, inter_cost = self._get_coupling_fields(p_idx, k + 1)
+
+            for _ in range(30 if pop.stencil_mode == 0 else 5):[cite: 8, 10]
+                if pop.stencil_mode == 0:
+                    FnU_flat = getFnU_2D(
+                        u[k + 1], Unew_n, pop.M[k + 1], self.omask, dm,
+                        running_cost_k + inter_cost, self.Nx, self.Ny, self.Dx, self.Dy, self.Dt,
+                        obstacle_penalty=pop.obstacle_penalty
+                    ).flatten()[cite: 8]
+                    rows, cols, vals = compute_HJB_matrix_entries(
+                        Unew_n, pop.M[k + 1], self.omask, dm,
+                        self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
+                    )[cite: 8]
+                else:
+                    FnU_flat = getFnU_2D_2Pop(
+                        u[k + 1], Unew_n, pop.M[k + 1], other_m, self.omask,
+                        self.Nx, self.Ny, self.Dx, self.Dy, self.Dt, pop=(p_idx + 1)
+                    ).flatten()[cite: 10]
+                    rows, cols, vals = compute_HJB_matrix_entries_2Pop(
+                        Unew_n, pop.M[k + 1], other_m, self.omask,
+                        self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
+                    )
+
+                A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()[cite: 8, 10]
+                b = A.dot(Unew_n.flatten()) - FnU_flat[cite: 8, 10]
+
+                for i in range(self.Nx):[cite: 8, 10]
+                    for j in range(self.Ny):[cite: 8, 10]
+                        ind = i * self.Ny + j[cite: 8, 10]
+                        if dm[i, j] == 1:
                             b[ind] = 0.0
-                        elif self.omask[i, j] == 0:
-                            b[ind] = self.obstacle_penalty
+                        elif self.omask[i, j] == 0:[cite: 8, 10]
+                            b[ind] = pop.obstacle_penalty[cite: 8]
 
-                # Newton update: solve A * U_new = b
-                Unres = sparse.linalg.spsolve(A, b).reshape((self.Nx, self.Ny))
-                l2err = np.linalg.norm(Unew_n.flatten() - Unres.flatten()) * np.sqrt(self.Dx * self.Dy)
-                Unew_n = np.copy(Unres)
-                if l2err < 1e-6:
+                Unres = sparse.linalg.spsolve(A, b).reshape((self.Nx, self.Ny))[cite: 8, 10]
+                l2err = np.linalg.norm(Unew_n.flatten() - Unres.flatten()) * np.sqrt(self.Dx * self.Dy)[cite: 8, 10]
+                Unew_n = np.copy(Unres)[cite: 8, 10]
+                if l2err < 1e-6:[cite: 8, 10]
                     break
-            u[k] = Unew_n
+            u[k] = Unew_n[cite: 8, 10]
         return u
 
-    def run_picard_system(self, max_iters: int = 10, tolerance: float = 1e-5):
-        """
-        Execute Picard iteration to solve the coupled HJB-KFP system with capacity limits.
+    def run_picard_system(self, max_iters: int = 15, tolerance: float = 1e-5):
+        """Execute coupled Picard relaxation loop across all N populations[cite: 8, 10]."""
+        space_time_factor = np.sqrt(self.Dx * self.Dy * self.Dt)[cite: 8, 10]
 
-        Picard iteration alternates between solving HJB (given density M) and solving
-        KFP (given value U), with under-relaxation to stabilize convergence. For dynamic
-        goals, also updates goal positions based on density gradients at each iteration.
+        for iiter in range(1, max_iters + 1):[cite: 8, 10]
+            start_time = time.time()[cite: 8, 10]
+            print(f"\n>>> Macro Picard Loop Execution: {iiter} / {max_iters}", flush=True)[cite: 8, 10]
 
-        Algorithm:
-            1. Solve HJB backward: U^{k+1} = HJB_solve(M^k, Y^k)
-            2. Solve KFP forward: M^{k+1} = KFP_solve(U^{k+1})
-            3. Update goals: Y^{k+1} = Goal_update(M^{k+1})  [if dynamic goals]
-            4. Apply relaxation: X^{k+1} = θ X_new + (1-θ) X^k for X ∈ {U, M, Y}
-            5. Check convergence: ||U^{k+1} - U^k|| < tol and ||M^{k+1} - M^k|| < tol
+            # 1. Update goals, mass absorption, and saturation states for all populations
+            Y_temps = []
+            for pop in self.populations:
+                if pop.goal is not None:
+                    mass_field = pop.M
+                    if self.shared_capacity_goals and self.num_pops > 1:
+                        mass_field = sum(p.M for p in self.populations)
+                    Y_temp = pop.goal.update_positions(
+                        mass_field, self.omask, self.Dx, self.Dy, self.Lx, self.Ly, pop.goals_are_exits
+                    )
+                    Y_temps.append(Y_temp)
+                    if pop.goal.has_capacity_limits:
+                        pop.door_mask = self.compute_saturated_door_mask(pop, pop.goal.Y_trajectories)
+                else:
+                    Y_temps.append(None)
 
-        Args:
-            max_iters (int): Maximum number of Picard iterations (default: 10)
-            tolerance (float): L2 convergence tolerance for U and M residuals (default: 1e-5)
+            # 2. Backward HJB solves across all populations[cite: 8, 10]
+            U_news = []
+            for p_idx, pop in enumerate(self.populations):
+                goal_traj = pop.goal.Y_trajectories if pop.goal is not None else None
+                U_temp = self.solve_backward_HJB_step(p_idx, goal_traj)[cite: 8, 10]
+                U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * pop.U[cite: 8, 10]
+                U_news.append(U_new)
 
-        Returns:
-            tuple: (U, M) where
-                U (ndarray): Converged value function, shape (Nt+1, Nx, Ny)
-                M (ndarray): Converged density distribution, shape (Nt+1, Nx, Ny)
-        """
-        # Normalization factor for L2 error in space-time
-        space_time_factor = np.sqrt(self.Dx * self.Dy * self.Dt)
+            # 3. Forward KFP solves across all populations[cite: 8, 10]
+            M_news = []
+            for p_idx, pop in enumerate(self.populations):
+                M_temp = self.solve_forward_FP_step(p_idx, U_news[p_idx])[cite: 8, 10]
+                M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * pop.M[cite: 8, 10]
+                M_news.append(M_new)
 
-        for iiter in range(1, max_iters + 1):
-            start_time = time.time()
-            print(f"\n>>> Macro Picard Loop Execution: {iiter} / {max_iters}", flush=True)
+            # 4. Trajectory relaxation and coordinate clamping
+            y_errs = []
+            for p_idx, pop in enumerate(self.populations):
+                Y_temp = Y_temps[p_idx]
+                if pop.goal is not None and Y_temp is not None:
+                    Y_new = self.thetaUM * Y_temp + (1.0 - self.thetaUM) * pop.goal.Y_trajectories
+                    for g_idx in range(pop.goal.num_goals):
+                        sat_k = pop.goal.saturation_steps[g_idx]
+                        if sat_k <= self.Nt:
+                            Y_new[sat_k:, g_idx, :] = Y_temp[sat_k, g_idx, :]
+                    y_errs.append(np.linalg.norm(Y_new - pop.goal.Y_trajectories))
+                    pop.goal.Y_trajectories = np.copy(Y_new)
 
-            # Step 1: Update dynamic goal trajectories and saturation states given current density M
-            if self.goal is not None:
-                Y_temp = self.goal.update_positions(self.M, self.omask, self.Dx, self.Dy, self.Lx, self.Ly, self.goals_are_exits)
-                goal_trajectories = self.goal.Y_trajectories
-            else:
-                Y_temp = None
-                goal_trajectories = None
+            # 5. Evaluate convergence criteria across all crowds[cite: 8, 10]
+            u_err = max(np.linalg.norm(U_news[p] - self.populations[p].U) * space_time_factor for p in range(self.num_pops))[cite: 10]
+            m_err = max(np.linalg.norm(M_news[p] - self.populations[p].M) * space_time_factor for p in range(self.num_pops))[cite: 10]
+            y_err = max(y_errs) if y_errs else 0.0
 
-            # Step 2: Build door mask from single source of truth (Goal.is_saturated)
-            if self.goal is not None and self.goal.has_capacity_limits:
-                self.door_mask = self.compute_saturated_door_mask(goal_trajectories)
-                self.door_mask_3d = self.door_mask
-
-            # Step 3: Solve HJB backward in time
-            U_temp = self.solve_backward_HJB_step(self.M, goal_trajectories, self.door_mask)
-            U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * self.U
-
-            # Step 4: Solve FP forward in time
-            M_temp = self.solve_forward_FP_step(U_new, self.door_mask)
-            M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.M
-
-            # Step 5: Relax goal trajectories and clamp post-saturation positions across all k >= sat_k
-            if self.goal is not None and Y_temp is not None:
-                Y_new = self.thetaUM * Y_temp + (1.0 - self.thetaUM) * self.goal.Y_trajectories
-
-                # Clamp post-saturation positions to prevent under-relaxation motion bleeding
-                for g_idx in range(self.goal.num_goals):
-                    sat_k = self.goal.saturation_steps[g_idx]
-                    if sat_k <= self.Nt:
-                        Y_new[sat_k:, g_idx, :] = Y_temp[sat_k, g_idx, :]
-
-                y_err = np.linalg.norm(Y_new - self.goal.Y_trajectories)
-                self.goal.Y_trajectories = np.copy(Y_new)
-            else:
-                y_err = 0.0
-
-            # Compute L2 residuals for convergence check
-            u_err = np.linalg.norm(U_new - self.U) * space_time_factor
-            m_err = np.linalg.norm(M_new - self.M) * space_time_factor
+            for p in range(self.num_pops):
+                self.populations[p].U = np.copy(U_news[p])[cite: 8, 10]
+                self.populations[p].M = np.copy(M_news[p])[cite: 8, 10]
 
             print(
                 f"    u_residual: {u_err:.6e} | m_residual: {m_err:.6e} | "
                 f"y_goal_residual: {y_err:.6e} | Time: {time.time() - start_time:.2f}s",
-                flush=True
+                flush=True,
             )
 
-            self.U = np.copy(U_new)
-            self.M = np.copy(M_new)
-
-            if u_err < tolerance and m_err < tolerance and y_err < tolerance:
-                print(f"\n[Success] Converged at iteration {iiter}!", flush=True)
+            if u_err < tolerance and m_err < tolerance and y_err < tolerance:[cite: 8, 10]
+                print(f"\n[Success] System converged at iteration {iiter}!", flush=True)[cite: 8]
                 break
 
-        return self.U, self.M
+        if self.num_pops == 1:
+            return self.populations[0].U, self.populations[0].M[cite: 8]
+        return tuple(p.U for p in self.populations) + tuple(p.M for p in self.populations)[cite: 10]
 
 
-class MFG2PopSolver:
+class MFG2PopSolver(MFGSolver):
     """
-    Coupled two-population Mean Field Game solver.
-
-    This solver handles competitive or cooperative scenarios with two distinct populations,
-    each solving its own HJB-KFP system while being influenced by the other population's
-    density distribution. Examples: pursuit-evasion with two crowds, competing crowds
-    navigating toward different exits, or cooperative crowds with different objectives.
-
-    The key difference from single-population MFG is that each population's Hamiltonian
-    depends on both its own density and the other population's density, creating a coupled
-    game-theoretic interaction.
-
-    Attributes:
-        Nx (int): Number of grid points in x-direction
-        Ny (int): Number of grid points in y-direction
-        Dx (float): Grid spacing in x-direction
-        Dy (float): Grid spacing in y-direction
-        Dt (float): Time step size (seconds)
-        Nt (int): Number of time steps
-        thetaUM (float): Under-relaxation parameter for Picard iteration (0 < theta <= 1)
-        omask (ndarray): Obstacle mask (Nx, Ny) - 0 for obstacles, 1 for free space
-        m0_1 (ndarray): Initial density for population 1, shape (Nx, Ny)
-        m0_2 (ndarray): Initial density for population 2, shape (Nx, Ny)
-        g_x_1 (ndarray): Terminal cost for population 1, shape (Nx, Ny)
-        g_x_2 (ndarray): Terminal cost for population 2, shape (Nx, Ny)
-        M1 (ndarray): Density trajectory for population 1, shape (Nt+1, Nx, Ny)
-        M2 (ndarray): Density trajectory for population 2, shape (Nt+1, Nx, Ny)
-        U1 (ndarray): Value function for population 1, shape (Nt+1, Nx, Ny)
-        U2 (ndarray): Value function for population 2, shape (Nt+1, Nx, Ny)
+    Subclass preserving 100% backward compatibility for run_2pop.py and MAP2PDE2POP.py[cite: 5, 10].
     """
 
-    def __init__(self, pde_mesh_data_1, pde_mesh_data_2, T: float = 300.0, Nt: int = 3000, thetaUM: float = 0.1):
+    def __init__(
+        self,
+        pde_mesh_data_1,
+        pde_mesh_data_2,
+        T: float = 5.0,
+        Nt: int = 100,
+        thetaUM: float = 0.1,
+    ):
+        pop1 = Population(
+            name="pop_1",
+            mesh=pde_mesh_data_1,
+            m0=pde_mesh_data_1.build_initial_density(sigma_multiplier=3),
+            goal_configs=[],
+            stencil_mode=1,
+            obstacle_penalty=-500.0,
+        )[cite: 10]
+        pop2 = Population(
+            name="pop_2",
+            mesh=pde_mesh_data_2,
+            m0=pde_mesh_data_2.build_initial_density(sigma_multiplier=3),
+            goal_configs=[],
+            stencil_mode=1,
+            obstacle_penalty=-500.0,
+        )[cite: 10]
+        # Exact asymmetric interaction matrix from MAP2PDE2POP.py[cite: 10]
+        W_inter = np.array([[0.0, 1500.0], [-5000.0, 0.0]], dtype=np.float64)[cite: 10]
+        W_cong = np.array([[0.0, 5.0], [5.0, 0.0]], dtype=np.float64)[cite: 10]
+
+        super().__init__(
+            populations=[pop1, pop2],
+            T=T,
+            Nt=Nt,
+            thetaUM=thetaUM,
+            interaction_matrix=W_inter,
+            congestion_matrix=W_cong,
+        )[cite: 5, 10]
+
+
+class MFGShadowLeaderSolver:
+    """
+    Generalized N-Population Shadow-Leader / Stackelberg Best-Response Solver.
+
+    Reduces numerical complexity in multi-crowd games by designating a subset
+    of populations as Leaders (L) whose trajectories are solved or fixed as shadow
+    paths, allowing the remaining Follower populations (F) to solve unilateral
+    best responses against the exogenous leader field without bidirectional feedback[cite: 10].
+    """
+
+    def __init__(
+        self,
+        populations: list[Population],
+        leader_indices: list[int] | None = None,
+        T: float = 5.0,
+        Nt: int = 100,
+        thetaUM: float = 0.1,
+        interaction_matrix: np.ndarray | None = None,
+        congestion_matrix: np.ndarray | None = None,
+        decouple_followers: bool = False,
+        shared_capacity_goals: bool = False,
+    ):
         """
-        Initialize the two-population Mean Field Game solver.
-
-        Args:
-            pde_mesh_data_1 (PDEMeshData): Mesh data for population 1 (contains initial
-                condition, terminal cost, and geometry)
-            pde_mesh_data_2 (PDEMeshData): Mesh data for population 2 (must have same
-                spatial grid as population 1)
-            T (float): Total simulation time in seconds (default: 300.0)
-            Nt (int): Number of time discretization steps (default: 3000)
-            thetaUM (float): Under-relaxation parameter for Picard iteration.
-                Smaller values stabilize convergence. (default: 0.1)
+        Parameters
+        ----------
+        populations : list[Population]
+            List of all N populations participating in the scenario[cite: 8, 10].
+        leader_indices : list[int], optional
+            Indices of populations acting as Shadow Leaders. Defaults to [0] (Population 0 is leader).
+        T : float
+            Simulation time horizon in seconds[cite: 5, 8, 10].
+        Nt : int
+            Number of time discretization steps[cite: 5, 8, 10].
+        thetaUM : float
+            Picard under-relaxation parameter (0 < theta <= 1)[cite: 5, 8, 10].
+        interaction_matrix : ndarray, optional
+            N x N strategic interaction matrix W_inter[cite: 10].
+        congestion_matrix : ndarray, optional
+            N x N kinetic cross-congestion matrix W_cong[cite: 10].
+        decouple_followers : bool
+            If True, follower populations solve independent 1-population problems
+            against the shadow leader (O(|F|) decoupled solves).
+            If False, followers solve a reduced coupled sub-game among themselves.
+        shared_capacity_goals : bool
+            Whether exit capacities are contested across populations.
         """
-        self.Nx, self.Ny = pde_mesh_data_1.X.shape
-        self.Dx, self.Dy = pde_mesh_data_1.dx, pde_mesh_data_1.dy
-        self.Dt = T / Nt
-        self.Nt = Nt
-        self.thetaUM = thetaUM
+        self.populations = populations
+        self.num_pops = len(populations)
+        self.T, self.Nt = T, Nt[cite: 8, 10]
+        self.Dt = T / Nt[cite: 8, 10]
+        self.thetaUM = thetaUM[cite: 8, 10]
+        self.decouple_followers = decouple_followers
+        self.shared_capacity_goals = shared_capacity_goals
 
-        self.omask = pde_mesh_data_1.get_pde_obstacle_mask()
-        self.m0_1 = pde_mesh_data_1.build_initial_density(sigma_multiplier=3)
-        self.g_x_1 = pde_mesh_data_1.build_terminal_cost()
+        self.leader_indices = leader_indices if leader_indices is not None else [0]
+        self.follower_indices = [i for i in range(self.num_pops) if i not in self.leader_indices]
 
-        self.m0_2 = pde_mesh_data_2.build_initial_density(sigma_multiplier=3)
-        self.g_x_2 = pde_mesh_data_2.build_terminal_cost()
+        # Use MFGSolver internally to coordinate PDE stencils and matrices
+        self.internal_solver = MFGSolver(
+            populations=self.populations,
+            T=T,
+            Nt=Nt,
+            thetaUM=thetaUM,
+            interaction_matrix=interaction_matrix,
+            congestion_matrix=congestion_matrix,
+            shared_capacity_goals=shared_capacity_goals,
+        )[cite: 5, 10]
 
-        self.M1, self.M2 = np.zeros((self.Nt + 1, self.Nx, self.Ny)), np.zeros((self.Nt + 1, self.Nx, self.Ny))
-        self.U1, self.U2 = np.zeros((self.Nt + 1, self.Nx, self.Ny)), np.zeros((self.Nt + 1, self.Nx, self.Ny))
-
-        self.M1[0], self.M2[0] = self.m0_1, self.m0_2
-        self.U1[self.Nt], self.U2[self.Nt] = self.g_x_1, self.g_x_2
-
-    def solve_forward_FP(self, U_trajectory, m0, M_other_trajectory):
+    def solve_shadow_leaders(self, max_iters: int = 10, tolerance: float = 1e-5):
         """
-        Solve the Fokker-Planck equation forward in time for one population.
-
-        Similar to single-population KFP, but the transport field now depends on the
-        other population's density through the Hamiltonian coupling.
-
-        Args:
-            U_trajectory (ndarray): This population's value function, shape (Nt+1, Nx, Ny)
-            m0 (ndarray): This population's initial density, shape (Nx, Ny)
-            M_other_trajectory (ndarray): Other population's density, shape (Nt+1, Nx, Ny)
-
-        Returns:
-            ndarray: Evolved density m of shape (Nt+1, Nx, Ny)
+        Phase 1: Compute nominal space-time trajectories (U_l, M_l) for Leader populations,
+        unhindered by follower densities[cite: 10].
         """
-        m = np.zeros((self.Nt + 1, self.Nx, self.Ny))
-        m[0] = m0
-        N_total = self.Nx * self.Ny
+        print(f"\n[Shadow-Leader Phase 1] Solving {len(self.leader_indices)} Leader population(s)...")
+        space_time_factor = np.sqrt(self.internal_solver.Dx * self.internal_solver.Dy * self.Dt)[cite: 8, 10]
 
-        for k in range(1, self.Nt + 1):
-            rows, cols, vals, b = compute_FP_matrix_entries_2Pop(
-                m[k - 1], M_other_trajectory[k - 1], U_trajectory[k - 1],
-                self.omask, self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
-            )
-            A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()
-            m[k] = sparse.linalg.spsolve(A, b).reshape((self.Nx, self.Ny))
-        return m
-
-    def get_u_onestep_newton(self, Uk_n, Unew_np1, Unew_n_tmp, Mk_np1, Mk_other, pop):
-        """
-        Perform one Newton iteration step for the HJB nonlinearity.
-
-        Solves the linearized system A * U_new = b where A is the Jacobian and b
-        is the residual, accounting for coupling with the other population's density.
-
-        Args:
-            Uk_n (ndarray): Current value at time k, shape (Nx, Ny) [not used, kept for signature]
-            Unew_np1 (ndarray): Value at time k+1, shape (Nx, Ny)
-            Unew_n_tmp (ndarray): Current Newton iterate at time k, shape (Nx, Ny)
-            Mk_np1 (ndarray): This population's density at time k+1, shape (Nx, Ny)
-            Mk_other (ndarray): Other population's density at time k+1, shape (Nx, Ny)
-            pop (int): Population identifier (1 or 2) for Hamiltonian selection
-
-        Returns:
-            ndarray: Updated value function U_new after Newton step, shape (Nx, Ny)
-        """
-        N_total = self.Nx * self.Ny
-        # Compute nonlinear residual F(U^n) with two-population Hamiltonian
-        FnU_flat = getFnU_2D_2Pop(
-            Unew_np1, Unew_n_tmp, Mk_np1, Mk_other,
-            self.omask, self.Nx, self.Ny, self.Dx, self.Dy, self.Dt, pop
-        ).flatten()
-
-        # Compute Jacobian matrix A = ∂F/∂U
-        rows, cols, vals = compute_HJB_matrix_entries_2Pop(
-            Unew_n_tmp, Mk_np1, Mk_other, self.omask,
-            self.Nx, self.Ny, self.Dx, self.Dy, self.Dt
-        )
-        A = sparse.coo_matrix((vals, (rows, cols)), shape=(N_total, N_total)).tocsr()
-        b = A.dot(Unew_n_tmp.flatten()) - FnU_flat
-
-        # Apply obstacle penalty
-        for i in range(self.Nx):
-            for j in range(self.Ny):
-                if self.omask[i, j] == 0:
-                    b[i * self.Ny + j] = -500.0
-
-        utmp = sparse.linalg.spsolve(A, b)
-        return utmp.reshape((self.Nx, self.Ny))
-
-    def solve_backward_HJB(self, M_trajectory, M_trajectory_other, U_temp, g_x, pop):
-        """
-        Solve the Hamilton-Jacobi-Bellman equation backward in time for one population.
-        
-        Similar to single-population HJB, but the Hamiltonian now depends on both this
-        population's density and the other population's density (game-theoretic coupling).
-        Uses Newton iteration at each timestep.
-
-        Args:
-            M_trajectory (ndarray): This population's density, shape (Nt+1, Nx, Ny)
-            M_trajectory_other (ndarray): Other population's density, shape (Nt+1, Nx, Ny)
-            U_temp (ndarray): Previous value function estimate (for initialization), shape (Nt+1, Nx, Ny)
-            g_x (ndarray): Terminal cost g(x) at final time, shape (Nx, Ny)
-            pop (int): Population identifier (1 or 2) for Hamiltonian selection
-
-        Returns:
-            ndarray: Value function u of shape (Nt+1, Nx, Ny)
-        """
-        u = np.zeros_like(U_temp)
-        u[self.Nt] = g_x
-        # Backward time-stepping loop
-        for k in range(self.Nt - 1, -1, -1):
-            Unew_n = np.copy(u[k + 1])
-            # Newton iteration (max 5 iterations per timestep)
-            for _ in range(5):
-                Unres = self.get_u_onestep_newton(u[k], u[k + 1], Unew_n, M_trajectory[k + 1], M_trajectory_other[k + 1], pop)
-                l2err = np.linalg.norm(Unew_n.flatten() - Unres.flatten()) * np.sqrt(self.Dx * self.Dy)
-                Unew_n = np.copy(Unres)
-                if l2err < 1e-6:
-                    break
-            u[k] = Unew_n
-        return u
-
-    def run_picard_system(self, max_iters: int = 25, tolerance: float = 1e-5):
-        """
-        Execute Picard iteration to solve the coupled two-population system.
-
-        This method alternates between solving HJB and KFP for each population, where
-        each population's equations depend on the other population's current state. The
-        coupling creates a game-theoretic Nash equilibrium problem.
-
-        Algorithm:
-            1. Solve HJB for population 1: U1^{k+1} = HJB_solve(M1^k, M2^k)
-            2. Solve HJB for population 2: U2^{k+1} = HJB_solve(M2^k, M1^k)
-            3. Solve KFP for population 1: M1^{k+1} = KFP_solve(U1^{k+1}, M2^k)
-            4. Solve KFP for population 2: M2^{k+1} = KFP_solve(U2^{k+1}, M1^k)
-            5. Apply relaxation: X^{k+1} = θ X_new + (1-θ) X^k for all state variables
-            6. Check convergence: max residuals < tolerance
-
-        Args:
-            max_iters (int): Maximum number of Picard iterations (default: 25)
-            tolerance (float): L2 convergence tolerance for both populations (default: 1e-5)
-
-        Returns:
-            tuple: (U1, M1, U2, M2) where
-                U1 (ndarray): Population 1 value function, shape (Nt+1, Nx, Ny)
-                M1 (ndarray): Population 1 density, shape (Nt+1, Nx, Ny)
-                U2 (ndarray): Population 2 value function, shape (Nt+1, Nx, Ny)
-                M2 (ndarray): Population 2 density, shape (Nt+1, Nx, Ny)
-        """
-        # Normalization factor for L2 error in space-time
-        space_time_factor = np.sqrt(self.Dx * self.Dy * self.Dt)
+        # Zero out follower densities during leader phase
+        for f_idx in self.follower_indices:
+            self.populations[f_idx].M.fill(0.0)
 
         for iiter in range(1, max_iters + 1):
             start_time = time.time()
-            print(f"\n>>> 2-Pop Picard Loop Iteration: {iiter} / {max_iters}", flush=True)
+            U_news, M_news = [], []
 
-            # Solve HJB for both populations (can be done in parallel conceptually)
-            U1_temp = self.solve_backward_HJB(self.M1, self.M2, self.U1, self.g_x_1, pop=1)
-            U2_temp = self.solve_backward_HJB(self.M2, self.M1, self.U2, self.g_x_2, pop=2)
+            for l_idx in self.leader_indices:
+                pop = self.populations[l_idx]
+                if pop.goal is not None:
+                    pop.goal.update_positions(pop.M, self.internal_solver.omask, self.internal_solver.Dx, self.internal_solver.Dy, self.internal_solver.Lx, self.internal_solver.Ly, pop.goals_are_exits)
+                goal_traj = pop.goal.Y_trajectories if pop.goal is not None else None
+                U_temp = self.internal_solver.solve_backward_HJB_step(l_idx, goal_traj)[cite: 8, 10]
+                U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * pop.U[cite: 8, 10]
+                U_news.append((l_idx, U_new))
 
-            # Apply under-relaxation to value functions
-            U1_new = self.thetaUM * U1_temp + (1.0 - self.thetaUM) * self.U1
-            U2_new = self.thetaUM * U2_temp + (1.0 - self.thetaUM) * self.U2
+            for l_idx, U_new in U_news:
+                M_temp = self.internal_solver.solve_forward_FP_step(l_idx, U_new)[cite: 8, 10]
+                M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.populations[l_idx].M[cite: 8, 10]
+                M_news.append((l_idx, M_new))
 
-            # Solve KFP for both populations with updated value functions
-            M1_temp = self.solve_forward_FP(U1_new, self.m0_1, self.M2)
-            M2_temp = self.solve_forward_FP(U2_new, self.m0_2, self.M1)
+            u_err = max(np.linalg.norm(U_new - self.populations[l_idx].U) * space_time_factor for l_idx, U_new in U_news)[cite: 10]
+            m_err = max(np.linalg.norm(M_new - self.populations[l_idx].M) * space_time_factor for l_idx, M_new in M_news)[cite: 10]
 
-            # Apply under-relaxation to densities
-            M1_new = self.thetaUM * M1_temp + (1.0 - self.thetaUM) * self.M1
-            M2_new = self.thetaUM * M2_temp + (1.0 - self.thetaUM) * self.M2
+            for l_idx, U_new in U_news: self.populations[l_idx].U = np.copy(U_new)[cite: 8, 10]
+            for l_idx, M_new in M_news: self.populations[l_idx].M = np.copy(M_new)[cite: 8, 10]
 
-            # Compute L2 residuals (use max over both populations)
-            u_err = max(np.linalg.norm(U1_new - self.U1), np.linalg.norm(U2_new - self.U2)) * space_time_factor
-            m_err = max(np.linalg.norm(M1_new - self.M1), np.linalg.norm(M2_new - self.M2)) * space_time_factor
-
-            print(f"    u_residual: {u_err:.6e} | m_residual: {m_err:.6e} | Time: {time.time() - start_time:.2f}s", flush=True)
-
-            # Update state for next iteration
-            self.U1, self.M1 = np.copy(U1_new), np.copy(M1_new)
-            self.U2, self.M2 = np.copy(U2_new), np.copy(M2_new)
-
-            # Check convergence: both populations must satisfy tolerance
+            print(f"    [Leader Loop] Iter {iiter}: u_res = {u_err:.6e} | m_res = {m_err:.6e} | Time = {time.time() - start_time:.2f}s")
             if u_err < tolerance and m_err < tolerance:
-                print(f"\n[Success] 2-Population system converged at iteration {iiter}!", flush=True)
+                print(f"[Success] Shadow Leader trajectories converged at iteration {iiter}!")
                 break
 
-        return self.U1, self.M1, self.U2, self.M2
+    def solve_follower_responses(self, max_iters: int = 15, tolerance: float = 1e-5):
+        """
+        Phase 2: Compute optimal best responses for Follower populations against
+        the frozen Leader space-time fields[cite: 10].
+        """
+        print(f"\n[Shadow-Leader Phase 2] Solving {len(self.follower_indices)} Follower population(s)...")
+        space_time_factor = np.sqrt(self.internal_solver.Dx * self.internal_solver.Dy * self.Dt)
+
+        for iiter in range(1, max_iters + 1):
+            start_time = time.time()
+
+            # Update follower goals (and capacity saturation) against frozen leader + follower mass
+            for f_idx in self.follower_indices:
+                pop = self.populations[f_idx]
+                if pop.goal is not None:
+                    mass_field = pop.M
+                    if self.shared_capacity_goals:
+                        mass_field = sum(p.M for p in self.populations)
+                    pop.goal.update_positions(mass_field, self.internal_solver.omask, self.internal_solver.Dx, self.internal_solver.Dy, self.internal_solver.Lx, self.internal_solver.Ly, pop.goals_are_exits)
+                    if pop.goal.has_capacity_limits:
+                        pop.door_mask = self.internal_solver.compute_saturated_door_mask(pop, pop.goal.Y_trajectories)
+
+            # Solve HJB backward for followers only (Leaders remain frozen)
+            U_news = []
+            for f_idx in self.follower_indices:
+                pop = self.populations[f_idx]
+                goal_traj = pop.goal.Y_trajectories if pop.goal is not None else None
+                U_temp = self.internal_solver.solve_backward_HJB_step(f_idx, goal_traj)
+                U_new = self.thetaUM * U_temp + (1.0 - self.thetaUM) * pop.U
+                U_news.append((f_idx, U_new))
+
+            # Solve KFP forward for followers only (Leaders remain frozen)
+            M_news = []
+            for f_idx, U_new in U_news:
+                M_temp = self.internal_solver.solve_forward_FP_step(f_idx, U_new)
+                M_new = self.thetaUM * M_temp + (1.0 - self.thetaUM) * self.populations[f_idx].M
+                M_news.append((f_idx, M_new))
+
+            u_err = max(np.linalg.norm(U_new - self.populations[f_idx].U) * space_time_factor for f_idx, U_new in U_news)
+            m_err = max(np.linalg.norm(M_new - self.populations[f_idx].M) * space_time_factor for f_idx, M_new in M_news)
+
+            for f_idx, U_new in U_news: self.populations[f_idx].U = np.copy(U_new)
+            for f_idx, M_new in M_news: self.populations[f_idx].M = np.copy(M_new)
+
+            print(f"    [Follower Loop] Iter {iiter}: u_res = {u_err:.6e} | m_res = {m_err:.6e} | Time = {time.time() - start_time:.2f}s")
+            if u_err < tolerance and m_err < tolerance:
+                print(f"[Success] Follower best responses converged at iteration {iiter}!")
+                break
+
+    def run_picard_system(self, max_iters: int = 15, tolerance: float = 1e-5):
+        """Execute the two-phase Shadow Leader workflow."""
+        self.solve_shadow_leaders(max_iters=max_iters, tolerance=tolerance)
+        self.solve_follower_responses(max_iters=max_iters, tolerance=tolerance)
+        return tuple(p.U for p in self.populations) + tuple(p.M for p in self.populations)

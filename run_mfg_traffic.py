@@ -148,8 +148,8 @@ def main():
     # === Step 1: Parse command-line arguments and load configuration ===
     options = Options()
     options.parser.set_defaults(config='configs/mfg_traffic.yml')
-    # Add obstacle_penalty argument: positive for traffic (repulsive), negative for evasion (attractive)
-    options.parser.add_argument('--obstacle_penalty', type=float, default=500.0, help='Obstacle cell potential penalty (+500 for traffic)')
+    # Override shared defaults for the traffic scenario.
+    options.parser.set_defaults(obstacle_penalty=500.0, goals_are_exits=True)
 
     args = options.parseArgs()
     print(f"Results will be saved to: {args.save_dir}", flush=True)

@@ -147,11 +147,18 @@ class Population:
 
 class MFGSolver:
     """
-    Generalized N-Population Mean Field Game Solver.
+    Generalized N-population Mean Field Game solver.
 
-    Solves coupled systems of HJB and KFP partial differential equations for arbitrary
-    N >= 1 populations via damped Picard iteration with post-saturation coordinate clamping.
-    Provides 100% backward compatibility for single-population scripts and competitive 2-population runs.
+    This is the main high-level solver interface for `mfgames`. It supports both
+    legacy single-population construction through `pde_mesh_data` and explicit
+    multi-population construction through a list of `Population` objects.
+
+    Each population may carry its own goals, mobility coefficients, obstacle
+    penalties, and cost weights. Optional interaction and congestion matrices
+    couple the populations through running potentials and effective mobility.
+
+    The coupled system is advanced by damped Picard iteration, alternating
+    backward HJB solves with forward KFP solves until convergence.
     """
 
     def __init__(
@@ -176,15 +183,14 @@ class MFGSolver:
         shared_capacity_goals: bool = False,
     ):
         """
-        Initialize the generalized N-population Mean Field Game solver.
+        Initialize a generalized N-population Mean Field Game solver.
 
         Parameters
         ----------
         populations : list of Population, optional
-            List of Population objects participating in the simulation. If provided,
-            multi-population mode is activated.
+            Explicit population descriptors for a multi-population solve.
         pde_mesh_data : MAP2PDE or MFGTrafficGeometry, optional
-            Convenience spatial mesh for single-population runs (backward-compatible).
+            Convenience mesh for legacy single-population solves.
         T : float, default=3.0
             Total time horizon in seconds.
         Nt : int, default=100
@@ -212,13 +218,14 @@ class MFGSolver:
         saturated_goal_penalty : float, default=0.0
             Repulsive barrier magnitude around filled goals for single-population runs.
         interaction_matrix : ndarray of shape (N, N), optional
-            Strategic interaction matrix W_inter defining cross-population attraction (< 0)
-            or repulsion (> 0) potentials.
+            Strategic interaction matrix. Entry `(p, q)` weights how population
+            `q` contributes to the running potential seen by population `p`.
         congestion_matrix : ndarray of shape (N, N), optional
-            Kinetic congestion matrix W_cong defining cross-population mobility friction.
+            Cross-population congestion matrix. Entry `(p, q)` weights how
+            population `q` contributes to the mobility friction of population `p`.
         shared_capacity_goals : bool, default=False
-            If True, cumulative mass from all populations is pooled together when evaluating
-            goal capacity thresholds.
+            If True, goal capacities are evaluated using pooled mass from all
+            populations instead of per-population mass only.
         """
         self.T, self.Nt = T, Nt
         self.Dt = T / Nt
@@ -548,13 +555,12 @@ class MFGSolver:
 
     def _get_coupling_fields(self, p_idx: int, k: int) -> tuple[np.ndarray, np.ndarray]:
         """
-        Compute effective other-crowd congestion and strategic interaction potential fields.
+        Build the coupling fields seen by one population at one timestep.
 
-        For population p at time step k, computes:
-        1. Cross-congestion field entering the mobility denominator:
-               m_cong(x) = sum_{q ≠ p} W_{pq}^{cong} * m_q(t_k, x)
-        2. Strategic interaction cost entering the HJB potential:
-               C_inter,p(x) = sum_{q ≠ p} W_{pq}^{inter} * m_q(t_k, x) + max(sum_q m_q(x) - 4.0, 0.0)
+        For population `p` at time index `k`, this returns:
+        - a weighted cross-population congestion field entering the mobility term,
+        - a weighted cross-population interaction field entering the HJB cost,
+          plus the aggregate overcrowding penalty.
 
         Parameters
         ----------
@@ -591,11 +597,10 @@ class MFGSolver:
 
     def solve_forward_FP_step(self, p_idx: int, U_p: np.ndarray) -> np.ndarray:
         """
-        Solve the forward Kolmogorov-Fokker-Planck equation for population p across all timesteps.
+        Solve the forward KFP equation for one population across all timesteps.
 
-        Solves the linear transport system forward in time from k = 1 to Nt:
-            A * m^{k} = m^{k-1} / Dt
-        using the unified assemble_FP_matrix stencil with JIT acceleration.
+        Given a fixed value-function trajectory `U_p`, this advances the density
+        from `t=0` to `t=T` using the assembled sparse transport operator.
 
         Parameters
         ----------
@@ -631,13 +636,10 @@ class MFGSolver:
 
     def solve_backward_HJB_step(self, p_idx: int, goal_trajectories: np.ndarray | None) -> np.ndarray:
         """
-        Solve the backward Hamilton-Jacobi-Bellman equation for population p.
+        Solve the backward HJB equation for one population.
 
-        Steps backward in time from k = Nt - 1 down to 0, applying Newton-Raphson iteration
-        at each timestep to resolve the nonlinear Hamiltonian:
-            A(u^n) * δu = -F(u^n)
-            u^{n, new} = u^n + δu
-        using evaluate_HJB_residual and assemble_HJB_jacobian from the unified numerics module.
+        This steps backward from `t=T` to `t=0`, applying Newton iteration at
+        each timestep with the current density and coupling fields held fixed.
 
         Parameters
         ----------
@@ -711,15 +713,11 @@ class MFGSolver:
 
     def run_picard_system(self, max_iters: int = 15, tolerance: float = 1e-5):
         """
-        Execute the coupled Picard fixed-point under-relaxation loop across all N populations.
+        Execute damped Picard iteration for the coupled MFG system.
 
-        Coordinates the five-step macro iteration loop:
-        1. Goal Motion & Saturation: Updates reactive goal positions and closes saturated doors.
-        2. Backward HJB Solves: Computes U_temp for each crowd and blends via U = θ*U_temp + (1-θ)*U.
-        3. Forward KFP Solves: Computes M_temp for each crowd and blends via M = θ*M_temp + (1-θ)*M.
-        4. Trajectory Relaxation & Clamping: Relaxes goal trajectories and enforces hard geometric
-           coordinate clamping at saturation locations (y_g(t) = y_g(t_sat) for all t >= t_sat).
-        5. Convergence Verification: Checks space-time L2 residual thresholds across all states.
+        Each macro iteration updates dynamic goals, solves backward HJB systems,
+        solves forward KFP systems, under-relaxes the resulting trajectories, and
+        checks space-time residuals for convergence.
 
         Parameters
         ----------
@@ -730,10 +728,8 @@ class MFGSolver:
 
         Returns
         -------
-        If num_pops == 1:
-            tuple of (U, M) where U and M have shape (Nt+1, Nx, Ny).
-        If num_pops > 1:
-            tuple of (U_1, ..., U_N, M_1, ..., M_N).
+        If `num_pops == 1`, returns `(U, M)`.
+        If `num_pops > 1`, returns `(U_1, ..., U_N, M_1, ..., M_N)`.
         """
         space_time_factor = np.sqrt(self.Dx * self.Dy * self.Dt)
 

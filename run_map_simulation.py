@@ -90,12 +90,14 @@ def main():
 
     # Scenario-specific arguments
     options.parser.add_argument('--goals', default=None, nargs='*', help='Goal dictionaries or coordinates.')
-    options.parser.add_argument('--goals_are_exits', action='store_true', default=False, help='If True, active goals act as absorbing exits.')
-    options.parser.add_argument('--obstacle_penalty', type=float, default=-500.0, help='Obstacle cell potential penalty.')
-    options.parser.add_argument('--running_cost_weight', type=float, default=0.01, help='Running cost scaling weight w_R.')
-    options.parser.add_argument('--terminal_cost_weight', type=float, default=None, help='Terminal cost scaling weight w_T (defaults to w_R if None).')
-    options.parser.add_argument('--running_cost_power', type=int, default=2, help='Exponent p_R for running distance cost.')
-    options.parser.add_argument('--terminal_cost_power', type=int, default=2, help='Exponent p_T for terminal distance cost.')
+    options.parser.set_defaults(
+        goals_are_exits=False,
+        obstacle_penalty=-500.0,
+        running_cost_weight=0.01,
+        terminal_cost_weight=None,
+        running_cost_power=2,
+        terminal_cost_power=2,
+    )
 
     args = options.parseArgs()
     print(f"Results will be saved to: {args.save_dir}", flush=True)

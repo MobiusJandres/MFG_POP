@@ -164,7 +164,12 @@ def run_verification(
 
     # Initial condition check
     m0_diff = np.max(np.abs(modern_solver.M[0] - legacy_solver.M[0]))
-    gT_diff = np.max(np.abs(modern_solver.compute_terminal_cost(goal_positions) - legacy_solver.g_x))
+    gT_diff = np.max(
+        np.abs(
+            modern_solver.compute_terminal_cost(modern_solver.populations[0], goal_positions)
+            - legacy_solver.g_x
+        )
+    )
 
     print("\n" + "=" * 80)
     print("VERIFICATION RESULTS TABLE")

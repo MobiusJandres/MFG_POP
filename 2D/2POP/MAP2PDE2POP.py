@@ -12,7 +12,6 @@ import matplotlib.animation as animation
 from scipy.sparse import lil_matrix
 from scipy.sparse.linalg import spsolve
 from numba import jit, prange
-import numba_scipy
 import os as os
 
 # %%

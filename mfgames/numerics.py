@@ -9,9 +9,9 @@ and Kolmogorov-Fokker-Planck (KFP) equations. All core operators are compiled us
 Architecture & Generalization:
 -----------------------------
 This module provides a unified numerical foundation that generalizes both single-population
-crowd navigation and arbitrary N-population multi-swarm interaction games:
-- 1-Population Systems: Single crowd navigation, evacuation, and major-minor pursuit-evasion.
-- N-Population Systems: Multi-team games with arbitrary cross-congestion and strategic interactions.
+crowd navigation and arbitrary N-population interaction games:
+- 1-Population Systems: Single crowd navigation, evacuation, and reactive-goal coordination.
+- N-Population Systems: Multi-population games with arbitrary cross-congestion and interaction couplings.
 - Generalized Mobility: Parameterized mobility coefficients c_h = gamma / (1 + m_self + m_cong)^beta,
   unifying standard congestion (gamma=16.0, beta=0.75) and multi-crowd friction (gamma=2.0, beta=1.0).
 - Boundary Conditions:
@@ -180,7 +180,7 @@ def assemble_FP_matrix(
         1.0 for competitive two-population games).
     upwind_mode : int, optional
         Directional convention for advective flux:
-            0: Standard gradient advection (used in single-population and pursuit-evasion models).
+            0: Standard gradient advection (used in single-population and reactive-goal models).
             1: Reversed gradient advection (used in legacy competitive two-population games).
 
     Returns

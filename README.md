@@ -1,6 +1,6 @@
 # mfgames
 
-A Python library for solving **Mean Field Games (MFG)** with applications to multi-agent coordination, crowd dynamics, and multi-population interactions. Supports diverse scenarios including traffic flow optimization, evacuation planning, dynamic target tracking, and competitive/cooperative agent systems. Built with Numba-accelerated finite difference methods for fast, scalable simulations.
+A Python library for solving **Mean Field Games (MFG)** with applications to multi-agent coordination, crowd dynamics, and multi-population interactions. Supports neutral public-facing scenarios such as traffic flow optimization, evacuation planning, moving-goal coordination, and competitive/cooperative population systems. Built with Numba-accelerated finite difference methods for fast, scalable simulations.
 
 ## Overview
 
@@ -14,10 +14,10 @@ A Python library for solving **Mean Field Games (MFG)** with applications to mul
 
 ## Features
 
-- **Three Simulation Modes**:
+- **Representative Workflows**:
   - Traffic evacuation with static or moving exits
-  - Pursuit-evasion with reactive goals
-  - Two-population games with coupled dynamics
+  - Moving-goal scenarios using reactive or prescribed goal trajectories
+  - Multi-population games with coupled dynamics
 
 - **Flexible Goal Types**:
   - Stationary goals
@@ -34,7 +34,7 @@ A Python library for solving **Mean Field Games (MFG)** with applications to mul
 - **Comprehensive Visualization**:
   - Density and value function heatmaps
   - Time-evolution animations (GIF/MP4)
-  - Evader trajectory overlays
+  - Dynamic goal trajectory overlays
 
 ## Mathematical Background
 
@@ -75,18 +75,18 @@ This models agents moving optimally toward low-cost regions while slowing down i
 
 ## Application Domains
 
-This library provides a general mathematical framework applicable to diverse coordination problems:
+This library provides a general mathematical framework applicable to diverse coordination problems while keeping interfaces and examples domain-neutral:
 
 ### Civilian & Research Applications
 - **Urban Planning**: Evacuation route design, pedestrian flow optimization
 - **Transportation**: Traffic management, autonomous vehicle coordination
 - **Ecology**: Wildlife migration modeling, predator-prey dynamics
-- **Robotics**: Multi-robot coordination, swarm path planning
+- **Robotics**: Multi-robot coordination, group path planning
 - **Economics**: Market dynamics, resource allocation games
 - **Crowd Management**: Event planning, venue design, public safety
 
 ### Mathematical Framework
-The underlying Mean Field Games theory is domain-agnostic. The same numerical solvers apply across scenarios by adjusting initial conditions, goal configurations, and cost functions.
+The underlying Mean Field Games theory is domain-agnostic. The same numerical solvers apply across scenarios by adjusting initial conditions, population couplings, goal configurations, and cost functions. Mission- or team-specific scenario semantics belong in downstream application layers rather than in this public engine.
 
 ## Installation
 
@@ -197,7 +197,7 @@ goals_are_exits: true
 
 ### 2. Dynamic Multi-Agent Coordination (`run_map_simulation.py`)
 
-Models populations interacting with dynamic goals that respond to agent density distributions. Goals optimize trajectories based on repulsive potential fields, enabling scenarios such as evacuation routing with adaptive exit selection, target tracking with evasive objectives, wildlife migration with predator avoidance, and traffic flow with congestion-responsive routing.
+Models populations interacting with dynamic goals that respond to agent density distributions. Goals optimize trajectories based on repulsive potential fields, enabling scenarios such as evacuation routing with adaptive exit selection, wildlife migration with avoidance behavior, and traffic flow with congestion-responsive routing.
 
 **Key Features**:
 - Moving goals react to crowd density gradient
@@ -275,7 +275,7 @@ A rigorous **Major-Minor Mean Field Game** formulation (not currently implemente
 - ✅ **Fast**: One force summation per evader per timestep (~30 lines of code)
 - ✅ **Intuitive**: Clear physical interpretation (repulsive force)
 - ✅ **Stable**: No nested optimization or adjoint solvers required
-- ✅ **Tunable**: Single parameter v_max controls evasion speed
+- ✅ **Tunable**: Single parameter `v_max` controls reactive-goal speed
 
 **Full Optimal Control Trade-offs**:
 - ⚙️ **Optimal**: Game-theoretically provable best response
@@ -300,7 +300,7 @@ For safety-critical systems requiring provable optimality or formal game-theoret
 goals:
   - type: "evader"
     position: [x, y]      # Initial evader position
-    v_max: 25.0           # Maximum evasion velocity (m/s)
+    v_max: 25.0           # Maximum reactive-goal velocity (m/s)
 ```
 
 ### 3. Two-Population Game (`run_2pop.py`)

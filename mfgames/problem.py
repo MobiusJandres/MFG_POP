@@ -17,7 +17,7 @@ minimize a spatio-temporal cost functional:
     J_p(v) = ∫_0^T [ f_p(x(t), t) + C_inter,p(m_1, ..., m_N) + (1/2)|v_p(t)|^2 ] dt + g_p(x(T))
 
 where:
-    - f_p(x, t) is the running cost field (distance to active targets and saturation barriers).
+    - f_p(x, t) is the running cost field (distance to active goals and saturation barriers).
     - C_inter,p is the strategic inter-crowd interaction potential (attraction/repulsion).
     - g_p(x) is the terminal boundary cost evaluated at t = T.
 
@@ -42,7 +42,7 @@ Classes
   density, decoupled running and terminal costs, kinematic parameters, and goal manager.
 - MFGSolver : Generalized Nash equilibrium solver for arbitrary N >= 1 populations.
 - MFG2PopSolver : Backward-compatible wrapper reproducing the competitive 2-population
-  pursuit-evasion scenario from MAP2PDE2POP.py.
+  two-population reactive-goal scenario from MAP2PDE2POP.py.
 - MFGShadowLeaderSolver : Scalable Stackelberg / Shadow-Leader best-response solver
   that freezes designated leader trajectories to decouple follower solves.
 """
@@ -72,7 +72,7 @@ class Population:
     Attributes
     ----------
     name : str
-        Descriptive label for the population (e.g., 'pursuers', 'evaders', 'team_alpha').
+        Descriptive label for the population (e.g., 'population_a', 'crowd_north').
     mesh : MAP2PDE or MFGTrafficGeometry
         Spatial discretization object providing grid coordinates (X, Y), cell step
         sizes (dx, dy), domain dimensions (Lx, Ly), and obstacle masks (omask).
@@ -107,7 +107,7 @@ class Population:
         Kinetic mobility coefficient numerator for the forward Fokker-Planck drift flux.
     upwind_mode : int, default=0
         Numerical directional upwind scheme:
-            0: Standard gradient advection (used in 1-population and pursuit-evasion models).
+            0: Standard gradient advection (used in 1-population and reactive-goal models).
             1: Reversed gradient advection (used in legacy competitive two-population games).
     U : ndarray of shape (Nt+1, Nx, Ny), optional
         Value function space-time solution tensor, allocated by solver during initialization.
@@ -565,7 +565,7 @@ class MFGSolver:
         Parameters
         ----------
         p_idx : int
-            Index of the target population.
+            Index of the interacting population.
         k : int
             Current discrete time step index.
 
@@ -824,7 +824,7 @@ class MFG2PopSolver(MFGSolver):
         thetaUM: float = 0.1,
     ):
         """
-        Initialize the two-population pursuit-evasion solver.
+        Initialize the two-population coupled solver.
 
         Parameters
         ----------
@@ -918,7 +918,7 @@ class MFGShadowLeaderSolver:
         congestion_matrix : ndarray of shape (N, N), optional
             Cross-congestion matrix W_cong.
         shared_capacity_goals : bool, default=False
-            Whether exit capacities are contested across all swarms.
+            Whether exit capacities are contested across all populations.
         """
         self.populations = populations
         self.num_pops = len(populations)

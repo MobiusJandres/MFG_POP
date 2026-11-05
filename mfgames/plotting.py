@@ -223,9 +223,9 @@ class MFGPlotter:
     Universal Dashboard, Multi-Crowd RGB Compositor, and Video Generation Engine.
 
     Provides a complete visualization suite for Mean Field Games simulations, supporting
-    1-population traffic evacuation, 2-population competitive pursuit-evasion, and
-    arbitrary N-population swarms. Automatically detects solver structure, tracks dynamic
-    goal coordinates, and renders exit door boundaries.
+    1-population traffic evacuation, 2-population competitive examples, and
+    arbitrary N-population systems. Automatically detects solver structure, tracks
+    dynamic goal coordinates, and renders exit door boundaries.
 
     Attributes
     ----------
@@ -356,7 +356,7 @@ class MFGPlotter:
 
         self.evader_trajectories = getattr(self.goal_instance, 'Y_trajectories', None)
 
-        # Door mask extraction across solver variants (traffic, evasion, multi-pop)
+        # Door mask extraction across solver variants (traffic, reactive-goal, multi-pop)
         self.door_mask = getattr(solver, 'door_mask', getattr(solver, 'door_mask_3d', None))
         if self.door_mask is None and hasattr(solver, 'populations') and len(solver.populations) > 0:
             self.door_mask = solver.populations[0].door_mask
@@ -411,7 +411,7 @@ class MFGPlotter:
 
     def _draw_goals(self, ax: plt.Axes, t_idx: int = 0) -> None:
         """
-        Render dynamic goals, static targets, and active exit door contours.
+        Render dynamic goals, static goals, and active exit door contours.
 
         Draws:
         1. Reactive / Evading Goals: Rendered as 'X' scatter markers. Colored cyan

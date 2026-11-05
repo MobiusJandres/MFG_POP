@@ -1,31 +1,29 @@
 """
-Pursuit-Evasion Mean Field Game Simulation Entry Point
+Map-based Mean Field Game simulation entry point.
 
-This script demonstrates a two-population Mean Field Game (MFG) where pursuers
-and evaders interact with opposing objectives. It showcases heterogeneous agent
-modeling, dynamic goal tracking, and congestion-aware crowd dynamics.
+This runner supports two related workflows on a MovingAI-derived spatial domain:
+1. a legacy single-population solve with heterogeneous goals via top-level `goals`,
+2. a generalized multi-population solve via `populations` plus numeric
+   `interaction_matrix` and `congestion_matrix` inputs.
 
-Key MFG Concepts Illustrated:
-    - Pursuit-evasion dynamics: Crowd minimize distance to goals, goals maximize distance to crowds
-    - Heterogeneous goals: Each population type has different v_max (movement capability)
-    - Coupled HJB-KFP system: Value functions and densities evolve simultaneously
-    - Obstacle-aware navigation: Negative obstacle penalties create repulsion barriers
-    - Congestion effects: Agent density influences optimal control via Hamiltonian
+The generalized path is intended for scenarios with multiple interacting
+populations on a shared map. The interaction matrix controls how each
+population contributes to the running potential seen by the others, while the
+congestion matrix controls how strongly one population slows another.
 
-Configuration:
-    Primary config file: configs/pursuit_evasion.yml
-    Defines: spatial domain, time horizon, Picard iteration parameters, populations
+Default configuration:
+    `configs/map_simulation.yml`
 
-Expected Outputs:
-    - snapshots_dashboard.png: Multi-timestep visualization grid (density + value)
-    - frames/*.png: Individual frames for each timestep
-    - pursuit_evasion.gif: Animated simulation showing population evolution
-    All saved to args.save_dir (default: runs/pursuit_evasion_YYYYMMDD_HHMMSS/)
+Generalized multi-population example:
+    `configs/map_simulation_3populations.yml`
 
-Usage:
-    python run_pursuit_evasion.py
-    python run_pursuit_evasion.py --config configs/custom_pursuit.yml
-    python run_pursuit_evasion.py --obstacle_penalty -1000.0 --running_cost_weight 0.05
+Outputs:
+    - `snapshots_dashboard.png`
+    - `frames/*.png`
+    - `dynamic_goals.gif`
+
+All outputs are written beneath the derived `save_dir`, which is constructed from
+`results_dir`, `exp_name`, and `run_name`.
 """
 
 # Command-line argument parsing and configuration management
@@ -35,7 +33,7 @@ from args.Options import Options
 from mfgames.geometry import MAP2PDE
 
 # Core MFG solver (Picard iteration for coupled HJB-KFP system)
-from mfgames.problem import MFGSolver
+from mfgames.problem import MFGSolver, Population
 
 # Visualization tools (heatmaps, animations, dashboards)
 from mfgames.plotting import MFGPlotter
@@ -43,35 +41,36 @@ from mfgames.plotting import MFGPlotter
 
 def main():
     """
-    Execute pursuit-evasion MFG simulation with heterogeneous populations.
+    Execute a map-based MFG simulation.
 
     This function orchestrates the complete workflow:
     1. Parse command-line arguments and load configuration file
     2. Initialize spatial geometry and mesh discretization
-    3. Configure MFG solver with population-specific parameters
+    3. Configure either a single-population or generalized multi-population solver
     4. Run Picard iteration to solve coupled HJB-KFP system
     5. Generate visualizations (dashboard, frames, animation)
 
     Key Configuration Parameters:
-        obstacle_penalty (float): Negative value creates repulsion field around obstacles.
-            Default -500.0 for pursuit-evasion (stronger than traffic scenarios which
-            use positive penalties). More negative = stronger avoidance.
+        goals (list): Top-level shared goals. In generalized multi-population mode,
+            these are inherited by every population automatically.
 
-        running_cost_weight (float): Scales the congestion/running cost term in the
-            Hamiltonian. Smaller values (0.01-0.05) prioritize reaching goals quickly;
-            larger values emphasize avoiding crowded regions.
+        populations (list): Generalized multi-population configuration. Each entry may
+            specify its own initial blobs, goal set, mobility coefficients, and costs.
+            Population-specific goals should be provided under `goals` and are
+            appended to the shared top-level `goals` list.
 
-        goals (list): Heterogeneous goals dictionaries with 'type' (pursuer/evader),
-            'position' ([x, y]), and 'v_max' (max velocity). Pursuers track evaders;
-            evaders maximize distance to pursuers.
+        interaction_matrix (list[list[float]]): Numeric interaction coupling matrix.
+            Entry `(p, q)` weights how strongly density from population `q`
+            contributes to the running potential seen by population `p`.
+            Positive values are repulsive and negative values are attractive.
 
-        goals_are_exits (bool): If True, populations are absorbed at goal locations
-            (Dirichlet BC: u=0). If False, goals create attractive potential wells.
+        congestion_matrix (list[list[float]]): Numeric mobility-friction matrix.
+            Larger positive values make one population slow another more strongly.
 
     Workflow Steps:
         1. Argument Parsing: Load YAML config and override with command-line flags
         2. Geometry Setup: Convert map/scenario files to PDE mesh (MAP2PDE)
-        3. Solver Configuration: Initialize MFGSolver with goal dictionaries
+        3. Solver Configuration: Build `Population` objects when `populations` is provided
         4. Picard Iteration: Solve HJB backward, KFP forward until convergence
         5. Visualization: Generate dashboard, individual frames, and GIF animation
 
@@ -80,7 +79,7 @@ def main():
 
     Raises:
         FileNotFoundError: If config file or map/scenario files are missing.
-        ValueError: If goal dictionaries have invalid structure.
+        ValueError: If goal/population dictionaries or coupling matrices are invalid.
     """
     # ============================================================================
     # STEP 1: Argument Parsing and Configuration
@@ -109,52 +108,117 @@ def main():
     map_str = str(args.map_file) if getattr(args, 'map_file', None) else None
     scen_str = str(args.scen_file) if getattr(args, 'scen_file', None) else None
 
-    # Parse heterogeneous goals (dictionaries or legacy coordinate lists)
-    # Goal dictionaries must contain: {'type': 'pursuer'|'evader', 'position': [x,y], 'v_max': float}
+    # Parse top-level shared goals (dictionaries or legacy coordinate lists)
+    # Goal dictionaries must contain: {'type': 'stationary'|'prescribed'|'evader', ...}
     raw_goals = getattr(args, 'goals', None)
-    goal_configs = []
+    shared_goal_configs = []
 
     if raw_goals:
         for g in raw_goals:
             if isinstance(g, dict):
-                # Full goal dictionary with type, position, v_max
-                goal_configs.append(g)
+                shared_goal_configs.append(g)
             elif isinstance(g, (list, tuple)):
-                # Legacy format: assume [x, y] coordinates, default to evader with v_max=15.0
-                goal_configs.append({'type': 'evader', 'position': [float(g[0]), float(g[1])], 'v_max': args.v_max_evader})
+                shared_goal_configs.append({'type': 'evader', 'position': [float(g[0]), float(g[1])], 'v_max': args.v_max_evader})
+
+    population_configs = getattr(args, 'populations', None)
 
     # Build PDE mesh from spatial domain specification
     # MAP2PDE handles: obstacle masks, door/exit locations, initial agent placement
     pde_mesh = MAP2PDE(
-        map_filepath=map_str,           # .map file defining obstacles/free space
-        scen_filepath=scen_str,         # .scen file with agent start positions
-        Lx=args.room_width,             # Physical domain width (meters)
-        Ly=args.room_height,            # Physical domain height (meters)
-        Nx=args.Nx,                     # Spatial grid resolution (x-direction)
-        Ny=args.Ny,                     # Spatial grid resolution (y-direction)
-        custom_goals=goal_configs       # Heterogeneous population goals
+        map_filepath=map_str,
+        scen_filepath=scen_str,
+        Lx=args.room_width,
+        Ly=args.room_height,
+        Nx=args.Nx,
+        Ny=args.Ny,
+        custom_goals=shared_goal_configs,
     )
-    pde_mesh.parse_files(num_agents=args.num_agents)  # Load map/scenario data
-    pde_mesh.build_spatial_mesh()                     # Discretize continuous domain
+    pde_mesh.parse_files(num_agents=args.num_agents)
+    pde_mesh.build_spatial_mesh()
+
+    populations = None
+    interaction_matrix = getattr(args, 'interaction_matrix', None)
+    congestion_matrix = getattr(args, 'congestion_matrix', None)
+    if population_configs:
+        populations = []
+
+        for idx, pop_cfg in enumerate(population_configs):
+            population_goals = list(pop_cfg.get('goals', []))
+            combined_goals = list(shared_goal_configs) + population_goals
+
+            mesh = MAP2PDE(
+                map_filepath=map_str,
+                scen_filepath=scen_str,
+                Lx=args.room_width,
+                Ly=args.room_height,
+                Nx=args.Nx,
+                Ny=args.Ny,
+                custom_goals=combined_goals,
+            )
+            mesh.parse_files(
+                num_agents=pop_cfg.get('num_agents', args.num_agents),
+                start_idx=pop_cfg.get('start_idx', 0),
+            )
+            mesh.build_spatial_mesh()
+
+            if pop_cfg.get('initial_blobs'):
+                mesh.set_custom_initial_blobs(
+                    pop_cfg['initial_blobs'],
+                    normalize_mass=pop_cfg.get('normalize_mass', False),
+                )
+
+            populations.append(
+                Population(
+                    name=pop_cfg.get('name', f'population_{idx + 1}'),
+                    mesh=mesh,
+                    m0=mesh.build_initial_density(
+                        sigma_multiplier=pop_cfg.get('sigma_multiplier', 1.5)
+                    ),
+                    goal_configs=combined_goals,
+                    goals_are_exits=pop_cfg.get('goals_are_exits', args.goals_are_exits),
+                    running_cost_weight=pop_cfg.get('running_cost_weight', args.running_cost_weight),
+                    terminal_cost_weight=pop_cfg.get('terminal_cost_weight', args.terminal_cost_weight),
+                    running_cost_power=pop_cfg.get('running_cost_power', args.running_cost_power),
+                    terminal_cost_power=pop_cfg.get('terminal_cost_power', args.terminal_cost_power),
+                    saturated_goal_penalty=pop_cfg.get('saturated_goal_penalty', args.saturated_goal_penalty),
+                    obstacle_penalty=pop_cfg.get('obstacle_penalty', args.obstacle_penalty),
+                    alpha=pop_cfg.get('alpha', 8.0),
+                    beta=pop_cfg.get('beta', 0.75),
+                    h0=pop_cfg.get('h0', 0.1),
+                    gamma=pop_cfg.get('gamma', 16.0),
+                    upwind_mode=pop_cfg.get('upwind_mode', 0),
+                )
+            )
 
     # ============================================================================
     # STEP 3: Solver Configuration
     # ============================================================================
     # Initialize MFG solver with mesh, time discretization, and population parameters
-    mfg_solver = MFGSolver(
-        pde_mesh_data=pde_mesh,                                           # Spatial mesh with obstacles/doors
-        T=args.T,                                                         # Time horizon (seconds)
-        Nt=args.Nt,                                                       # Number of time steps
-        thetaUM=args.relaxation_theta,                                    # Picard relaxation (0 < theta < 1)
-        goal_configs=goal_configs,                                        # Heterogeneous population goals
-        goals_are_exits=args.goals_are_exits,                             # Exit mode vs potential well mode
-        obstacle_penalty=args.obstacle_penalty,                           # Negative for repulsion barriers
-        running_cost_weight=args.running_cost_weight,                     # Congestion sensitivity scaling
-        terminal_cost_weight=args.terminal_cost_weight,
-        running_cost_power=args.running_cost_power,
-        terminal_cost_power=args.terminal_cost_power,
-        saturated_goal_penalty=args.saturated_goal_penalty,                # Saturated goal repulsion penalty
-    )
+    if populations is not None:
+        mfg_solver = MFGSolver(
+            populations=populations,
+            T=args.T,
+            Nt=args.Nt,
+            thetaUM=args.relaxation_theta,
+            interaction_matrix=interaction_matrix,
+            congestion_matrix=congestion_matrix,
+            shared_capacity_goals=getattr(args, 'shared_capacity_goals', False),
+        )
+    else:
+        mfg_solver = MFGSolver(
+            pde_mesh_data=pde_mesh,
+            T=args.T,
+            Nt=args.Nt,
+            thetaUM=args.relaxation_theta,
+            goal_configs=shared_goal_configs,
+            goals_are_exits=args.goals_are_exits,
+            obstacle_penalty=args.obstacle_penalty,
+            running_cost_weight=args.running_cost_weight,
+            terminal_cost_weight=args.terminal_cost_weight,
+            running_cost_power=args.running_cost_power,
+            terminal_cost_power=args.terminal_cost_power,
+            saturated_goal_penalty=args.saturated_goal_penalty,
+        )
 
     # ============================================================================
     # STEP 4: Picard Iteration (Core MFG Solver)
@@ -179,10 +243,10 @@ def main():
     plotter.save_density_frames(output_dir=str(frames_dir))
 
     # Create GIF animation showing temporal evolution of population densities
-    animation_path = args.save_dir / "pursuit_evasion.gif"
+    animation_path = args.save_dir / "population_dynamics.gif"
     plotter.create_movie(frame_dir=str(frames_dir), output_file=str(animation_path), fps=15)
 
-    print("Pursuit-Evasion run completed successfully!", flush=True)
+    print("Map simulation run completed successfully!", flush=True)
 
 # Script entry point: execute main() when run directly (not imported as module)
 if __name__ == "__main__":

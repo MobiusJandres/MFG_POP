@@ -55,7 +55,7 @@ plotting : Visualization and animation utilities
 
 Typical Usage
 -------------
-1-Population Pursuit-Evasion Scenario:
+1-Population Reactive Goal Scenario:
     >>> from mfgames import MAP2PDE, MFGSolver, MFGPlotter
     >>>
     >>> # Load MovingAI benchmark map and scenario
@@ -64,7 +64,7 @@ Typical Usage
     >>> mesh.parse_files(num_agents=50)
     >>> mesh.build_spatial_mesh()
     >>>
-    >>> # Configure evader goals (goals which move away from a crowd)
+    >>> # Configure reactive goals (goals which move away from dense regions)
     >>> goals = [{'type': 'evader', 'position': [400, 400], 'v_max': 15.0}]
     >>>
     >>> # Solve coupled MFG system
@@ -79,8 +79,8 @@ Typical Usage
 2-Population Competitive Scenario:
     >>> from mfgames import MAP2PDE, MFG2PopSolver, MFGPlotter
     >>>
-    >>> mesh1 = MAP2PDE("map.map", "team1.scen", Nx=100, Ny=100)
-    >>> mesh2 = MAP2PDE("map.map", "team2.scen", Nx=100, Ny=100)
+    >>> mesh1 = MAP2PDE("map.map", "population1.scen", Nx=100, Ny=100)
+    >>> mesh2 = MAP2PDE("map.map", "population2.scen", Nx=100, Ny=100)
     >>> mesh1.parse_files(num_agents=30)
     >>> mesh2.parse_files(num_agents=30)
     >>>

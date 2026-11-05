@@ -124,7 +124,7 @@ def main():
     - max_iters (int): Maximum Picard iterations (50-100 typical for convergence)
     - obstacle_penalty (float): Penalty for entering obstacle cells
       * Positive (+500): Repulsive barrier (traffic evacuation)
-      * Negative (-500): Attractive barrier (pursuit-evasion, see run_mfg_evasion.py)
+      * Negative (-500): Attractive barrier (reactive-goal scenarios)
 
     Outputs:
     --------

@@ -17,7 +17,7 @@
 \maketitle
 
 \begin{abstract}
-This document establishes a comprehensive mathematical framework for modeling the interaction between $N$ continuum populations of minor players (crowds) and dynamic major players (evading or capacity-constrained goals) within a bounded spatial domain containing obstacles. We present both the continuous optimal control formulation via Pontryagin's Maximum Principle (PMP) and the numerical discretization realized in the \texttt{mfgames} library. The system couples backward Hamilton-Jacobi-Bellman (HJB) equations under decoupled running and terminal costs, forward Kolmogorov-Fokker-Planck (KFP) equations modeling crowd transport, and adjoint costate differential equations governing optimal evasion. Furthermore, we parameterize adversarial, allied, and neutral crowd interactions via interaction and cross-congestion matrices, detail multi-crowd capacity saturation, and formulate an extended Picard fixed-point scheme with post-saturation trajectory clamping.
+This document establishes a comprehensive mathematical framework for modeling the interaction between $N$ continuum populations of minor players (crowds) and dynamic major players (evading or capacity-constrained goals) within a bounded spatial domain containing obstacles. We present both the continuous optimal control formulation via Pontryagin's Maximum Principle (PMP) and the numerical discretization realized in the \texttt{mfgames} library. The system couples backward Hamilton-Jacobi-Bellman (HJB) equations under decoupled running and terminal costs, forward Kolmogorov-Fokker-Planck (KFP) equations modeling crowd transport, and adjoint costate differential equations governing optimal evasion. Furthermore, we parameterize general attraction, repulsion, and neutral crowd interactions via interaction and cross-congestion matrices, detail multi-crowd capacity saturation, and formulate an extended Picard fixed-point scheme with post-saturation trajectory clamping.
 \end{abstract}
 
 \section{Introduction \& Domain Configuration}
@@ -26,7 +26,7 @@ Let $\Omega \subset \mathbb{R}^2$ be a bounded spatial domain with obstacle boun
 The system comprises two classes of entities:
 \begin{enumerate}
     \item \textbf{Minor Players ($N$ Crowds):} A continuum of $N$ statistically identical agent populations, where each crowd $p \in \{1, \dots, N\}$ has macroscopic spatial density $m_p(t, x) \ge 0$ satisfying $\int_\Omega m_p(t, x) \, dx \le M_{0, p}$.
-    \item \textbf{Major Players (Goals):} A discrete collection of $G$ goal objects $\{y_g(t)\}_{g=1}^G \subset \Omega$. Goals may be stationary landing pads, prescribed parametric trajectories, or strategic reactive agents actively evading crowd density. Goals may also possess finite capacity ceilings $C_{\text{max}, g}$ shared across teams or allocated exclusively.
+    \item \textbf{Major Players (Goals):} A discrete collection of $G$ goal objects $\{y_g(t)\}_{g=1}^G \subset \Omega$. Goals may be stationary landing pads, prescribed parametric trajectories, or strategic reactive agents actively evading crowd density. Goals may also possess finite capacity ceilings $C_{\text{max}, g}$ shared across populations or allocated exclusively.
 \end{enumerate}
 
 \section{Minor Player (Crowd) Dynamics}
@@ -79,7 +79,7 @@ where $\mathbf{W}^{\text{inter}} \in \mathbb{R}^{N \times N}$ is the interaction
 \subsubsection{Relational Taxonomy}
 \begin{itemize}
     \item \textbf{Adversarial Pairs (Pursuit-Evasion):} Asymmetric off-diagonal entries. If crowd $p$ pursues crowd $q$, $W_{pq}^{\text{inter}} < 0$ (attraction well towards $m_q$). If crowd $q$ evades crowd $p$, $W_{qp}^{\text{inter}} > 0$ (repulsion barrier away from $m_p$). Cross-congestion friction is high: $W_{pq}^{\text{cong}} \gg 1.0$.
-    \item \textbf{Allied / Cooperative Teams:} Populations share team affinity. $W_{pq}^{\text{inter}} \le 0$ encourages aggregation, and $W_{pq}^{\text{cong}} \approx 1.0$ models standard co-flow.
+    \item \textbf{Cooperative / Attractive Couplings:} Populations share team affinity. $W_{pq}^{\text{inter}} \le 0$ encourages aggregation, and $W_{pq}^{\text{cong}} \approx 1.0$ models standard co-flow.
     \item \textbf{Neutral / Bystander Crowds:} Unrelated populations moving through the domain. $W_{pq}^{\text{inter}} = 0$, while $W_{pq}^{\text{cong}} = 1.0$ enforces volume exclusion.
 \end{itemize}
 

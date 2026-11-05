@@ -28,7 +28,7 @@ def create_n_pop_setup(Nx=80, Ny=80, room_size=768.0):
     # Define 4 distinct populations
     # Pop 0: Leader Swarm (moves South toward (400, 100))
     pop0 = Population(
-        name="leader_swarm",
+        name="leader_population",
         mesh=base_mesh,
         m0=base_mesh.set_custom_initial_blobs([(400.0, 650.0, 35.0, 6.0)]),
         goal_configs=[{"type": "stationary", "position": [400.0, 100.0]}],

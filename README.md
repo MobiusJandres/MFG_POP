@@ -163,8 +163,8 @@ python run_mfg_traffic.py
 # 2. Dynamic multi-agent coordination on MovingAI maps
 python run_map_simulation.py
 
-# 3. Two-population game (coupled crowds with distinct goals)
-python run_2pop.py
+# 3. Generalized multi-population example
+python run_npop.py
 ```
 
 All scripts read configuration from `configs/*.yml` and save outputs to `results/<timestamp>/`.
@@ -303,7 +303,7 @@ goals:
     v_max: 25.0           # Maximum reactive-goal velocity (m/s)
 ```
 
-### 3. Two-Population Game (`run_2pop.py`)
+### 3. Generalized Multi-Population Example (`run_npop.py`)
 
 Couples two distinct populations with separate goals and interaction costs.
 
@@ -324,7 +324,7 @@ Nt: 150
 max_iters: 15
 ```
 
-**Outputs**: Side-by-side density evolution, interaction metrics, MP4 animation.
+**Outputs**: Printed solver diagnostics for multiple populations and a compact generalized solve example.
 
 ## Package Structure
 

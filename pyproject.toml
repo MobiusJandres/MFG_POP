@@ -17,7 +17,6 @@ keywords = [
     "pde", 
     "optimal-control", 
     "crowd-dynamics", 
-    "pursuit-evasion", 
     "numba"
 ]
 classifiers = [

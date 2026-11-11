@@ -1,5 +1,5 @@
 """
-Mean Field Games Library: Coupled PDE Solvers for Crowd Dynamics and Pursuit-Evasion Games.
+Mean Field Games Library: Coupled PDE Solvers for Crowd Dynamics and Multi-Population Games.
 
 This package implements numerical solvers for Mean Field Games (MFG) systems, solving
 coupled Hamilton-Jacobi-Bellman (HJB) and Kolmogorov-Fokker-Planck (KFP) partial
@@ -30,7 +30,7 @@ geometry : Spatial domain and obstacle configuration
     - MFGTrafficGeometry: Generates primitive corridor geometries
     - create_moving_door_mask: Dynamic exit door trajectory generation
 
-evasion : Goal and evader trajectory management
+objectives : Goal and trajectory management
     - Goal: Handles stationary goals, prescribed paths, and evasive goals
 
 solvers : Low-level PDE time-stepping routines
@@ -43,8 +43,10 @@ numerics : Numba-JIT compiled finite difference operators
     - getFnU_2D: Residual computation for Newton iteration
 
 problem : High-level object-oriented solver interfaces
-    - MFGSolver: 1-population solver (traffic flow, pursuit-evasion)
-    - MFG2PopSolver: 2-population competitive interaction solver
+    - Population: Per-population configuration and state container
+    - MFGSolver: Generalized N-population solver
+    - MFG2PopSolver: Backward-compatible 2-population competitive solver
+    - MFGShadowLeaderSolver: Best-response solver with frozen leader trajectories
 
 plotting : Visualization and animation utilities
     - MFGPlotter: Snapshot dashboards, time-lapse PNGs, GIF/MP4 export
@@ -53,7 +55,7 @@ plotting : Visualization and animation utilities
 
 Typical Usage
 -------------
-1-Population Pursuit-Evasion Scenario:
+1-Population Reactive Goal Scenario:
     >>> from mfgames import MAP2PDE, MFGSolver, MFGPlotter
     >>>
     >>> # Load MovingAI benchmark map and scenario
@@ -62,7 +64,7 @@ Typical Usage
     >>> mesh.parse_files(num_agents=50)
     >>> mesh.build_spatial_mesh()
     >>>
-    >>> # Configure evader goals (goals which move away from a crowd)
+    >>> # Configure reactive goals (goals which move away from dense regions)
     >>> goals = [{'type': 'evader', 'position': [400, 400], 'v_max': 15.0}]
     >>>
     >>> # Solve coupled MFG system
@@ -77,8 +79,8 @@ Typical Usage
 2-Population Competitive Scenario:
     >>> from mfgames import MAP2PDE, MFG2PopSolver, MFGPlotter
     >>>
-    >>> mesh1 = MAP2PDE("map.map", "team1.scen", Nx=100, Ny=100)
-    >>> mesh2 = MAP2PDE("map.map", "team2.scen", Nx=100, Ny=100)
+    >>> mesh1 = MAP2PDE("map.map", "population1.scen", Nx=100, Ny=100)
+    >>> mesh2 = MAP2PDE("map.map", "population2.scen", Nx=100, Ny=100)
     >>> mesh1.parse_files(num_agents=30)
     >>> mesh2.parse_files(num_agents=30)
     >>>
@@ -141,10 +143,10 @@ Package Structure
 mfgames/
 ├── __init__.py       : Package exports and high-level API
 ├── geometry.py       : Spatial domain and obstacle handling
-├── evasion.py        : Goal/evader trajectory management
+├── objectives.py     : Goal and trajectory management
 ├── solvers.py        : Time-stepping routines for HJB/KFP
 ├── numerics.py       : JIT-compiled finite difference operators
-├── problem.py        : Object-oriented MFGSolver/MFG2PopSolver
+├── problem.py        : Object-oriented multi-population solvers
 └── plotting.py       : Visualization and animation tools
 
 See Also
@@ -157,7 +159,7 @@ from .geometry import MAP2PDE, create_moving_door_mask
 from .objectives import Goal
 from .solvers import solveFP_2D, solveHJB_withM
 from .plotting import MFGPlotter
-from .problem import MFGSolver
+from .problem import MFGSolver, MFG2PopSolver, MFGShadowLeaderSolver, Population
 
 __all__ = [
     "MAP2PDE",
@@ -166,5 +168,8 @@ __all__ = [
     "solveFP_2D",
     "solveHJB_withM",
     "MFGPlotter",
+    "Population",
     "MFGSolver",
+    "MFG2PopSolver",
+    "MFGShadowLeaderSolver",
 ]

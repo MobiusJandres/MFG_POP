@@ -1,9 +1,11 @@
+# Virtual Environments
 .venv/
 __pycache__/
 *.png
 *.npz
 *.egg-info*
 archive/
+uv.lock
 
 # Output directories
 */*Output*/

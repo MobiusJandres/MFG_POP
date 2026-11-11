@@ -7,14 +7,14 @@ supporting four primary operational behaviors:
 1. Stationary: Fixed position goals (e.g., exit doors, static or mobile landing pads)
 2. Prescribed: Time-dependent parametric trajectories (e.g., moving obstacles/platforms)
 3. Evader: Dynamically reactive goals that move away from crowd density using
-   repulsive force fields (implements evasion game dynamics)
+   repulsive force fields (implements reactive-goal dynamics)
 4. Capacity-Constrained: Exit goals or landing platforms with maximum mass ceilings
    that saturate and deactivate after absorbing a specified cumulative density threshold.
    Once saturated, moving goals freeze permanently at their saturation location.
 
 The evasive goal dynamics use a continuous repulsive potential field computed from
-the crowd density distribution M(x,y,t), enabling adversarial game scenarios where
-goals actively avoid the pursuing crowd.
+the crowd density distribution M(x,y,t), enabling generic reactive scenarios where
+goals actively avoid dense regions.
 """
 import numpy as np
 
@@ -77,8 +77,8 @@ class Goal:
 
     3. **Evader goals**: Dynamically reactive goals using repulsive force fields
        - Velocity computed from crowd density M(x,y,t) via inverse-square repulsion
-       - Implements evasion game: dY/dt = v_max * ∇Φ(Y, M) where Φ is repulsive potential
-       - Maximum speed constraint v_max enforces bounded evasion capability
+       - Implements reactive-goal motion: dY/dt = v_max * ∇Φ(Y, M) where Φ is repulsive potential
+       - Maximum speed constraint v_max enforces bounded goal motion
 
     4. **Capacity-Constrained goals**: Mobile or static landing pads with maximum mass ceilings
        - Stores finite capacity limit C_max (cumulative density units allowed)
@@ -123,7 +123,7 @@ class Goal:
                 - dict with keys:
                     - 'type': 'stationary', 'prescribed', or 'evader' (default 'evader')
                     - 'position': [x, y] initial position (required)
-                    - 'v_max': Maximum evasion speed in m/s (default 15.0, evaders only)
+                    - 'v_max': Maximum reactive-goal speed in m/s (default 15.0)
                     - 'path_x': Expression for prescribed x(t) (prescribed goals only)
                     - 'path_y': Expression for prescribed y(t) (prescribed goals only)
                     - 'capacity': Maximum cumulative density threshold (default inf)
@@ -243,7 +243,7 @@ class Goal:
         """
         Update goal trajectories based on crowd density field for evader-type goals.
 
-        Implements the evasion dynamics for reactive goals using repulsive force fields
+        Implements reactive-goal motion using repulsive force fields
         computed from the crowd density distribution M(x,y,t). The evader velocity at
         position Y is computed as:
 
@@ -251,7 +251,7 @@ class Goal:
             v(Y) = v_max * F(Y) / |F(Y)|                (normalized to max speed)
             Y(t+Δt) = Y(t) + v(Y) Δt                    (forward Euler integration)
         
-        This implements a greedy evasion strategy where goals move directly away from
+        This implements a greedy reactive strategy where goals move directly away from
         the center of mass of nearby crowd density with bounded maximum speed.
 
         Args:

@@ -1,0 +1,138 @@
+# Generalized 3-population map simulation configuration for
+# `run_map_simulation.py`.
+#
+# `interaction_matrix[p][q]` controls how density from population `q`
+# contributes to the running potential seen by population `p`.
+# Negative values are attractive, zero disables the coupling, and positive
+# values are repulsive.
+
+exp_name: "map_simulation"
+run_name: "three_population_generalized"
+results_dir: "results"
+timezone: "UTC"
+
+map_file: "Maps/AcrosstheCape.map"
+scen_file: "Scenarios/AcrosstheCape_1g.map.scen"
+room_width: 768.0
+room_height: 768.0
+Nx: 100
+Ny: 100
+num_agents: 50
+
+T: 5.0
+Nt: 150
+max_iters: 15
+relaxation_theta: 0.1
+
+# Shared defaults used unless overridden per population
+obstacle_penalty: -500.0
+running_cost_weight: 0.01
+terminal_cost_weight: 0.01
+running_cost_power: 2
+terminal_cost_power: 2
+saturated_goal_penalty: 25.0
+goals_are_exits: false
+shared_capacity_goals: false
+
+# Shared goals inherited by all populations.
+goals:
+  - type: "stationary"
+    position: [384.0, 690.0]
+    capacity: 12.0
+    is_exit: false
+  - type: "evader"
+    position: [384.0, 120.0]
+    v_max: 11.0
+    capacity: 7.0
+    is_exit: false
+
+# Running-potential coupling across populations.
+# Diagonal entries are typically zero.
+interaction_matrix:
+  - [0.0, -1.0, 2.0]
+  - [-1.0, 0.0, 0.0]
+  - [2.0, 0.0, 0.0]
+
+# Mobility-friction coupling across populations.
+# Larger positive values mean one population slows another more strongly.
+congestion_matrix:
+  - [0.0, 0.5, 0.8]
+  - [0.5, 0.0, 0.3]
+  - [0.8, 0.3, 0.0]
+
+populations:
+  - name: "population_alpha"
+    num_agents: 20
+    sigma_multiplier: 1.5
+    normalize_mass: false
+    initial_blobs:
+      - [120.0, 620.0, 45.0, 3.0]
+      - [180.0, 560.0, 35.0, 2.0]
+    goals_are_exits: false
+    running_cost_weight: 0.01
+    terminal_cost_weight: 0.02
+    alpha: 8.0
+    beta: 0.75
+    gamma: 16.0
+    h0: 0.1
+    upwind_mode: 0
+    goals:
+      - type: "stationary"
+        position: [650.0, 640.0]
+        capacity: 18.0
+        is_exit: false
+      - type: "evader"
+        position: [560.0, 580.0]
+        v_max: 12.0
+        capacity: 10.0
+        is_exit: false
+
+  - name: "population_bravo"
+    num_agents: 20
+    sigma_multiplier: 1.5
+    normalize_mass: false
+    initial_blobs:
+      - [140.0, 180.0, 40.0, 2.5]
+    goals_are_exits: false
+    running_cost_weight: 0.012
+    terminal_cost_weight: 0.02
+    alpha: 8.0
+    beta: 0.75
+    gamma: 16.0
+    h0: 0.1
+    upwind_mode: 0
+    goals:
+      - type: "stationary"
+        position: [640.0, 180.0]
+        capacity: 16.0
+        is_exit: false
+      - type: "evader"
+        position: [560.0, 240.0]
+        v_max: 10.0
+        capacity: 9.0
+        is_exit: false
+
+  - name: "population_charlie"
+    num_agents: 20
+    sigma_multiplier: 1.5
+    normalize_mass: false
+    initial_blobs:
+      - [620.0, 380.0, 50.0, 2.0]
+    goals_are_exits: false
+    running_cost_weight: 0.015
+    terminal_cost_weight: 0.02
+    alpha: 8.0
+    beta: 0.75
+    gamma: 16.0
+    h0: 0.1
+    upwind_mode: 0
+    goals:
+      - type: "stationary"
+        position: [180.0, 380.0]
+        capacity: 14.0
+        is_exit: false
+      - type: "evader"
+        position: [260.0, 460.0]
+        v_max: 14.0
+        capacity: 8.0
+        is_exit: false

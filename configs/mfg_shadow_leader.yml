@@ -1,0 +1,25 @@
+# Core Experiment Metadata
+exp_name: "shadow_leader_suite"
+run_name: "n_pop_shadow_benchmark"
+results_dir: "results"
+timezone: "UTC"
+
+# Environment Setup
+map_file: "Maps/AcrosstheCape.map"
+scen_file: "Scenarios/AcrosstheCape.map.scen"
+room_width: 768.0
+room_height: 768.0
+Nx: 80
+Ny: 80
+num_agents: 1
+
+# Simulation Parameters
+T: 60.0
+Nt: 120
+max_iters: 8
+relaxation_theta: 0.1
+
+# Shadow Leader Mode
+shadow_leader: true
+leader_indices: [0]
+shared_capacity_goals: true

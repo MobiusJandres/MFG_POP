@@ -17,49 +17,53 @@ from mfgames.problem import MFGSolver, MFGShadowLeaderSolver, Population
 
 
 def create_n_pop_setup(Nx=80, Ny=80, room_size=768.0):
-    map_file = "Maps/AcrosstheCape.map"[cite: 10]
-    scen_file = "Scenarios/AcrosstheCape.map.scen"[cite: 10]
+    map_file = "Maps/AcrosstheCape.map"
+    scen_file = "Scenarios/AcrosstheCape.map.scen"
 
     # Shared mesh geometry
-    base_mesh = MAP2PDE(map_file, scen_file, Lx=room_size, Ly=room_size, Nx=Nx, Ny=Ny)[cite: 10]
-    base_mesh.parse_files(start_idx=0, num_agents=1)[cite: 10]
-    base_mesh.build_spatial_mesh()[cite: 10]
+    base_mesh = MAP2PDE(map_file, scen_file, Lx=room_size, Ly=room_size, Nx=Nx, Ny=Ny)
+    base_mesh.parse_files(start_idx=0, num_agents=1)
+    base_mesh.build_spatial_mesh()
 
     # Define 4 distinct populations
-    # Pop 0: Leader Swarm (moves South toward (400, 100))
+    # Pop 0: Leader population (moves South toward (400, 100))
+    base_mesh.set_custom_initial_blobs([(400.0, 650.0, 35.0, 6.0)], normalize_mass=False)
     pop0 = Population(
         name="leader_population",
         mesh=base_mesh,
-        m0=base_mesh.set_custom_initial_blobs([(400.0, 650.0, 35.0, 6.0)]),
+        m0=base_mesh.build_initial_density(sigma_multiplier=1.5),
         goal_configs=[{"type": "stationary", "position": [400.0, 100.0]}],
         running_cost_weight=0.01,
-        stencil_mode=0,
+        upwind_mode=0,
     )
 
-    # Pop 1, 2, 3: Follower Swarms positioned across the domain
+    # Pop 1, 2, 3: follower populations positioned across the domain
+    base_mesh.set_custom_initial_blobs([(150.0, 384.0, 30.0, 4.0)], normalize_mass=False)
     pop1 = Population(
         name="follower_west",
         mesh=base_mesh,
-        m0=base_mesh.set_custom_initial_blobs([(150.0, 384.0, 30.0, 4.0)]),
+        m0=base_mesh.build_initial_density(sigma_multiplier=1.5),
         goal_configs=[{"type": "stationary", "position": [150.0, 700.0], "capacity": 20.0, "is_exit": True}],
         running_cost_weight=0.01,
-        stencil_mode=0,
+        upwind_mode=0,
     )
+    base_mesh.set_custom_initial_blobs([(400.0, 384.0, 30.0, 4.0)], normalize_mass=False)
     pop2 = Population(
         name="follower_center",
         mesh=base_mesh,
-        m0=base_mesh.set_custom_initial_blobs([(400.0, 384.0, 30.0, 4.0)]),
+        m0=base_mesh.build_initial_density(sigma_multiplier=1.5),
         goal_configs=[{"type": "stationary", "position": [400.0, 700.0], "capacity": 20.0, "is_exit": True}],
         running_cost_weight=0.01,
-        stencil_mode=0,
+        upwind_mode=0,
     )
+    base_mesh.set_custom_initial_blobs([(650.0, 384.0, 30.0, 4.0)], normalize_mass=False)
     pop3 = Population(
         name="follower_east",
         mesh=base_mesh,
-        m0=base_mesh.set_custom_initial_blobs([(650.0, 384.0, 30.0, 4.0)]),
+        m0=base_mesh.build_initial_density(sigma_multiplier=1.5),
         goal_configs=[{"type": "stationary", "position": [650.0, 700.0], "capacity": 20.0, "is_exit": True}],
         running_cost_weight=0.01,
-        stencil_mode=0,
+        upwind_mode=0,
     )
 
     pops = [pop0, pop1, pop2, pop3]

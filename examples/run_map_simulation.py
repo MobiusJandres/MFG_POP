@@ -27,7 +27,7 @@ All outputs are written beneath the derived `save_dir`, which is constructed fro
 """
 
 # Command-line argument parsing and configuration management
-from args.Options import Options
+from mfgames.config import Options
 
 # Geometry and mesh generation (MAP2PDE converts spatial maps to PDE discretization)
 from mfgames.geometry import MAP2PDE

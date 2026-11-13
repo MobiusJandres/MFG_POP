@@ -66,7 +66,7 @@ See Also:
 # === Imports ===
 
 # Command-line argument parsing and configuration management
-from args.Options import Options
+from mfgames.config import Options
 
 # Spatial discretization: mesh construction, obstacle masks, and door boundary conditions
 from mfgames.geometry import (

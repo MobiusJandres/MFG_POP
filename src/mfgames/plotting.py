@@ -30,6 +30,18 @@ import matplotlib.animation as animation
 import numpy as np
 
 
+DEFAULT_POPULATION_COLORS = [
+    "#ff4d4d",
+    "#2288ff",
+    "#2ecc71",
+    "#f1c40f",
+    "#9b59b6",
+    "#e67e22",
+    "#1abc9c",
+    "#ec407a",
+]
+
+
 # =============================================================================
 # STANDALONE PLOTTING FUNCTIONS
 # =============================================================================
@@ -319,6 +331,7 @@ class MFGPlotter:
         self.solver = solver
         self.mesh1 = mesh_1
         self.mesh2 = mesh_2
+        self.populations = list(getattr(solver, 'populations', []))
 
         # Spatial domain dimensions and discretization spacings
         self.Lx, self.Ly = mesh_1.Lx, mesh_1.Ly
@@ -337,6 +350,7 @@ class MFGPlotter:
             (hasattr(solver, 'populations') and len(solver.populations) > 1)
             or (hasattr(solver, 'M2') and solver.M2 is not None)
         )
+        self.num_pops = len(self.populations) if self.populations else (2 if self.is_multipop else 1)
 
         if self.is_multipop:
             self.M1 = getattr(solver, 'M1', solver.populations[0].M if hasattr(solver, 'populations') else None)
@@ -356,6 +370,11 @@ class MFGPlotter:
 
         self.evader_trajectories = getattr(self.goal_instance, 'Y_trajectories', None)
 
+        requested_population_colors = kwargs.get('population_colors', None)
+        if requested_population_colors is None and hasattr(solver, 'population_colors'):
+            requested_population_colors = getattr(solver, 'population_colors')
+        self.population_colors = self._resolve_population_colors(requested_population_colors)
+
         # Door mask extraction across solver variants (traffic, reactive-goal, multi-pop)
         self.door_mask = getattr(solver, 'door_mask', getattr(solver, 'door_mask_3d', None))
         if self.door_mask is None and hasattr(solver, 'populations') and len(solver.populations) > 0:
@@ -374,6 +393,37 @@ class MFGPlotter:
 
         self.goals_1 = _extract_goals(mesh_1)
         self.goals_2 = _extract_goals(mesh_2)
+        self.population_static_goals = self._extract_population_static_goals()
+
+    def _resolve_population_colors(self, requested_colors) -> list[str]:
+        """Resolve a stable color list for arbitrary-population visualizations."""
+        if isinstance(requested_colors, dict) and self.populations:
+            return [
+                requested_colors.get(pop.name, DEFAULT_POPULATION_COLORS[idx % len(DEFAULT_POPULATION_COLORS)])
+                for idx, pop in enumerate(self.populations)
+            ]
+        if isinstance(requested_colors, (list, tuple)) and requested_colors:
+            return [requested_colors[idx % len(requested_colors)] for idx in range(max(self.num_pops, 1))]
+        return [DEFAULT_POPULATION_COLORS[idx % len(DEFAULT_POPULATION_COLORS)] for idx in range(max(self.num_pops, 1))]
+
+    def _extract_population_static_goals(self) -> list[list[tuple[float, float]]]:
+        """Extract per-population static goal coordinates from population configs."""
+        if not self.populations:
+            return [self.goals_1, self.goals_2]
+
+        population_goals: list[list[tuple[float, float]]] = []
+        for pop in self.populations:
+            coords: list[tuple[float, float]] = []
+            raw_goals = getattr(pop, 'goal_configs', None) or getattr(pop.mesh, 'custom_goals', None) or []
+            for goal in raw_goals:
+                if isinstance(goal, dict):
+                    pos = goal.get('position')
+                    if pos is not None:
+                        coords.append((float(pos[0]), float(pos[1])))
+                elif isinstance(goal, (list, tuple)) and len(goal) >= 2:
+                    coords.append((float(goal[0]), float(goal[1])))
+            population_goals.append(coords)
+        return population_goals
 
     def _get_spatial_frame(self, data_array: np.ndarray | None, t_index: int) -> np.ndarray | None:
         """
@@ -447,19 +497,33 @@ class MFGPlotter:
                     zorder=10,
                 )
         else:
-            # 2. Render static goals from scenario definitions
-            if self.goals_1:
-                gxs, gys = zip(*self.goals_1)
-                ax.scatter(
-                    gxs, gys, color='#ff2222', marker='X', s=70,
-                    edgecolor='white', linewidth=1.2, label='Pop 1 Goals', zorder=10
-                )
-            if self.goals_2:
-                gxs, gys = zip(*self.goals_2)
-                ax.scatter(
-                    gxs, gys, color='#2288ff', marker='X', s=70,
-                    edgecolor='white', linewidth=1.2, label='Pop 2 Goals', zorder=10
-                )
+            # 2. Render static goals from per-population scenario definitions.
+            if self.population_static_goals:
+                for idx, goals in enumerate(self.population_static_goals):
+                    if not goals:
+                        continue
+                    gxs, gys = zip(*goals)
+                    label = self.populations[idx].name if idx < len(self.populations) else f'Pop {idx + 1}'
+                    ax.scatter(
+                        gxs, gys,
+                        color=self.population_colors[idx % len(self.population_colors)],
+                        marker='X', s=70,
+                        edgecolor='white', linewidth=1.2,
+                        label=f'{label} Goals', zorder=10
+                    )
+            else:
+                if self.goals_1:
+                    gxs, gys = zip(*self.goals_1)
+                    ax.scatter(
+                        gxs, gys, color=self.population_colors[0], marker='X', s=70,
+                        edgecolor='white', linewidth=1.2, label='Pop 1 Goals', zorder=10
+                    )
+                if self.goals_2:
+                    gxs, gys = zip(*self.goals_2)
+                    ax.scatter(
+                        gxs, gys, color=self.population_colors[1 % len(self.population_colors)], marker='X', s=70,
+                        edgecolor='white', linewidth=1.2, label='Pop 2 Goals', zorder=10
+                    )
 
         # 3. Render absorbing exit doors via lime-green contour lines
         if self.door_mask is not None:

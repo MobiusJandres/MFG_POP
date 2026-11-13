@@ -29,7 +29,7 @@ Usage:
 """
 
 # Command-line argument parsing and configuration management
-from args.Options import Options
+from mfgames.config import Options
 
 # Geometry and mesh generation (MAP2PDE converts spatial maps to PDE discretization)
 from mfgames.geometry import MAP2PDE
@@ -90,13 +90,6 @@ def main():
 
     # Add pursuit-evasion specific arguments
     options.parser.add_argument('--goals', default=None, nargs='*', help='Goal dictionaries or coordinates')
-    options.parser.add_argument('--goals_are_exits', action='store_true', default=False, help='If True, goals act as exits')
-
-    # Negative obstacle penalty creates repulsion barriers (contrast with positive penalties in traffic scenarios)    
-    options.parser.add_argument('--obstacle_penalty', type=float, default=-500.0, help='Obstacle cell potential penalty')
-
-    # Running cost balances goal-seeking vs congestion-avoidance behavior
-    options.parser.add_argument('--running_cost_weight', type=float, default=0.01, help='Running cost scaling weight')
 
     args = options.parseArgs()
     print(f"Results will be saved to: {args.save_dir}", flush=True)

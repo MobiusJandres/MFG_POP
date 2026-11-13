@@ -66,7 +66,7 @@ See Also:
 # === Imports ===
 
 # Command-line argument parsing and configuration management
-from args.Options import Options
+from mfgames.config import Options
 
 # Spatial discretization: mesh construction, obstacle masks, and door boundary conditions
 from mfgames.geometry import (
@@ -149,7 +149,6 @@ def main():
     options = Options()
     options.parser.set_defaults(config='configs/mfg_traffic.yml')
     # Add obstacle_penalty argument: positive for traffic (repulsive), negative for evasion (attractive)
-    options.parser.add_argument('--obstacle_penalty', type=float, default=500.0, help='Obstacle cell potential penalty (+500 for traffic)')
 
     args = options.parseArgs()
     print(f"Results will be saved to: {args.save_dir}", flush=True)

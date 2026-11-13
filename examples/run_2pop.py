@@ -77,7 +77,7 @@ See Also
 """
 # Import section
 import logging
-from args.Options import Options  # Command-line argument parsing and config file loading
+from mfgames.config import Options  # Command-line argument parsing and config file loading
 from mfgames.geometry import MAP2PDE  # Spatial mesh construction and geometry handling
 from mfgames.problem import MFG2PopSolver  # Coupled 2-population MFG solver (Picard iteration)
 from mfgames.plotting import MFGPlotter  # Visualization tools for density/value function output

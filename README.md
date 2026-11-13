@@ -158,20 +158,20 @@ The repository includes three ready-to-run examples:
 
 ```bash
 # 1. Traffic evacuation (50m × 50m room with exit doors)
-python run_mfg_traffic.py
+python examples/run_mfg_traffic.py
 
 # 2. Dynamic multi-agent coordination on MovingAI maps
-python run_map_simulation.py
+python examples/run_map_simulation.py
 
 # 3. Two-population game (coupled crowds with distinct goals)
-python run_2pop.py
+python examples/run_2pop.py
 ```
 
 All scripts read configuration from `configs/*.yml` and save outputs to `results/<timestamp>/`.
 
 ## Examples
 
-### 1. Traffic Evacuation (`run_mfg_traffic.py`)
+### 1. Traffic Evacuation (`examples/run_mfg_traffic.py`)
 
 Models crowd evacuation through exit doors with congestion effects.
 
@@ -195,7 +195,7 @@ goals_are_exits: true
 
 **Outputs**: Density evolution animation, value function snapshots, dashboard plots.
 
-### 2. Dynamic Multi-Agent Coordination (`run_map_simulation.py`)
+### 2. Dynamic Multi-Agent Coordination (`examples/run_map_simulation.py`)
 
 Models populations interacting with dynamic goals that respond to agent density distributions. Goals optimize trajectories based on repulsive potential fields, enabling scenarios such as evacuation routing with adaptive exit selection, target tracking with evasive objectives, wildlife migration with predator avoidance, and traffic flow with congestion-responsive routing.
 
@@ -303,7 +303,7 @@ goals:
     v_max: 25.0           # Maximum evasion velocity (m/s)
 ```
 
-### 3. Two-Population Game (`run_2pop.py`)
+### 3. Two-Population Game (`examples/run_2pop.py`)
 
 Couples two distinct populations with separate goals and interaction costs.
 

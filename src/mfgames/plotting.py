@@ -696,55 +696,65 @@ class MFGPlotter:
         plt.close(fig)
 
     def save_density_frames(self, output_dir: str = "mfg_simulation_frames") -> None:
-        """
-        Export individual PNG heatmap frames for all simulation time steps.
-
-        Generates Nt+1 sequentially numbered PNG images (frame_000.png, frame_001.png, ...)
-        suitable for video compiling or presentation inspection. Normalizes density using
-        initial t = 0 maxima, renders walls in dark slate gray, and renders door outlines.
-
-        Parameters
-        ----------
-        output_dir : str, default='mfg_simulation_frames'
-            Directory path where generated PNG frames are stored.
-        """
+        """Export individual PNG heatmap frames for all simulation time steps."""
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         print(f"Exporting animation PNG frames to './{output_dir}'...", flush=True)
 
-        m1_0_frame = self._get_spatial_frame(self.M1, 0)
-        m1_0_masked = np.ma.masked_where(self.wall_mask, m1_0_frame)
-        stable_vmax1 = np.max(m1_0_masked) if np.max(m1_0_masked) > 0 else 1.0
+        if self.populations and len(self.populations) > 2:
+            stable_vmaxes = []
+            for pop in self.populations:
+                m0_frame = self._get_spatial_frame(pop.M, 0)
+                m0_masked = np.ma.masked_where(self.wall_mask, m0_frame)
+                stable_vmaxes.append(np.max(m0_masked) if np.max(m0_masked) > 0 else 1.0)
 
-        if self.is_multipop and self.M2 is not None:
-            m2_0_frame = self._get_spatial_frame(self.M2, 0)
-            m2_0_masked = np.ma.masked_where(self.wall_mask, m2_0_frame)
-            stable_vmax2 = np.max(m2_0_masked) if np.max(m2_0_masked) > 0 else 1.0
+            for k in range(self.Nt + 1):
+                fig, axes = plt.subplots(1, len(self.populations), figsize=(5 * len(self.populations), 5), layout='constrained')
+                axes = np.atleast_1d(axes)
+                for idx, pop in enumerate(self.populations):
+                    ax = axes[idx]
+                    ax.set_facecolor('#2c3e50')
+                    frame = self._get_spatial_frame(pop.M, k)
+                    frame_masked = np.ma.masked_where(self.wall_mask, frame)
+                    im = ax.imshow(frame_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmaxes[idx])
+                    ax.set_title(f"{pop.name} - Time: {k * self.Dt:.2f}s")
+                    ax.set_xlabel("X (meters)")
+                    ax.set_ylabel("Y (meters)")
+                    self._draw_goals(ax, k)
+                    fig.colorbar(im, ax=ax, label='Density')
+                fig.savefig(f"{output_dir}/frame_{k:03d}.png", dpi=150)
+                plt.close(fig)
+        else:
+            m1_0_frame = self._get_spatial_frame(self.M1, 0)
+            m1_0_masked = np.ma.masked_where(self.wall_mask, m1_0_frame)
+            stable_vmax1 = np.max(m1_0_masked) if np.max(m1_0_masked) > 0 else 1.0
 
-        for k in range(self.Nt + 1):
-            fig, ax = plt.subplots(figsize=(6, 5), layout='constrained')
-            ax.set_facecolor('#2c3e50')
-
-            m1_frame = self._get_spatial_frame(self.M1, k)
             if self.is_multipop and self.M2 is not None:
-                m2_frame = self._get_spatial_frame(self.M2, k)
-                rgb_img = self._build_combined_rgb(m1_frame, m2_frame, stable_vmax1, stable_vmax2)
-                ax.imshow(rgb_img, origin='lower', extent=self.extent, interpolation='nearest')
-                ax.set_title(f"Pop 1 (Red) & Pop 2 (Blue) - Time: {k * self.Dt:.2f}s")
-            else:
-                m_masked = np.ma.masked_where(self.wall_mask, m1_frame)
-                im = ax.imshow(
-                    m_masked.T, origin='lower', extent=self.extent,
-                    cmap='YlOrRd', vmin=0, vmax=stable_vmax1
-                )
-                fig.colorbar(im, ax=ax, label='Density')
-                ax.set_title(f"Crowd Density - Time: {k * self.Dt:.2f}s")
+                m2_0_frame = self._get_spatial_frame(self.M2, 0)
+                m2_0_masked = np.ma.masked_where(self.wall_mask, m2_0_frame)
+                stable_vmax2 = np.max(m2_0_masked) if np.max(m2_0_masked) > 0 else 1.0
 
-            self._draw_goals(ax, k)
-            ax.set_xlabel("X (meters)")
-            ax.set_ylabel("Y (meters)")
+            for k in range(self.Nt + 1):
+                fig, ax = plt.subplots(figsize=(6, 5), layout='constrained')
+                ax.set_facecolor('#2c3e50')
 
-            fig.savefig(f"{output_dir}/frame_{k:03d}.png", dpi=150)
-            plt.close(fig)
+                m1_frame = self._get_spatial_frame(self.M1, k)
+                if self.is_multipop and self.M2 is not None:
+                    m2_frame = self._get_spatial_frame(self.M2, k)
+                    rgb_img = self._build_combined_rgb(m1_frame, m2_frame, stable_vmax1, stable_vmax2)
+                    ax.imshow(rgb_img, origin='lower', extent=self.extent, interpolation='nearest')
+                    ax.set_title(f"Pop 1 (Red) & Pop 2 (Blue) - Time: {k * self.Dt:.2f}s")
+                else:
+                    m_masked = np.ma.masked_where(self.wall_mask, m1_frame)
+                    im = ax.imshow(m_masked.T, origin='lower', extent=self.extent, cmap='YlOrRd', vmin=0, vmax=stable_vmax1)
+                    fig.colorbar(im, ax=ax, label='Density')
+                    ax.set_title(f"Crowd Density - Time: {k * self.Dt:.2f}s")
+
+                self._draw_goals(ax, k)
+                ax.set_xlabel("X (meters)")
+                ax.set_ylabel("Y (meters)")
+
+                fig.savefig(f"{output_dir}/frame_{k:03d}.png", dpi=150)
+                plt.close(fig)
 
         print(f"Successfully exported {self.Nt + 1} frames to '{output_dir}'.", flush=True)
 
